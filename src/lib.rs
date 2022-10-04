@@ -1,3 +1,5 @@
+#![feature(c_variadic)]
+
 #[macro_use]
 extern crate lazy_static;
 
@@ -6,15 +8,13 @@ use std::{
     fs::File,
     io::Write,
     os::raw::{c_char, c_int},
-    ptr::null_mut,
     sync::Mutex,
-    
 };
 
-use libc::{DIR, dirent};
+use libc::{DIR, dirent, O_CREAT, mode_t};
 
 use redhook::{
-    hook, real,
+    hook, real, real2,
 };
 
 lazy_static! {
@@ -60,4 +60,23 @@ hook! {
         }
         result
     }
+}
+
+pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
+    let real_open = real2!(open);
+
+    let name = to_string(CStr::from_ptr(pathname));
+
+    let result = if (flags & O_CREAT) == 0 {
+        log!("[TADB] called open with name={} flags={}", name, flags);
+        real_open(pathname, flags)
+    }
+    else {
+        let mode = args.arg::<mode_t>();
+        log!("[TADB] called open with name={} flags={} mode={}", name, flags, mode);
+        real_open(pathname, flags, mode)
+    };
+
+    log!("[TADB] open returned fd with value {}", result);
+    result
 }
