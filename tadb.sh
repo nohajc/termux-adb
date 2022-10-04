@@ -3,7 +3,7 @@
 PROC_SHELL="/proc/$PPID"
 
 USB_DEV_FD_FILE="$PROC_SHELL/fd/$TERMUX_USB_FD"
-USB_DEV_PATH=$(readlink -f "$USB_DEV_FD_FILE")
+USB_DEV_PATH=$(readlink "$USB_DEV_FD_FILE")
 USB_DEV_DIR=$(dirname "$USB_DEV_PATH")
 
 USB_FAKEDEV_PATH=${USB_DEV_PATH/\/dev/.\/fakedev}
