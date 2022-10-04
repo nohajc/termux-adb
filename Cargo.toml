@@ -1,0 +1,15 @@
+[package]
+name = "termux-adb"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "adbhooks"
+crate-type = ["cdylib"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+lazy_static = "1.4.0"
+libc = "0.2.134"
+redhook = "2.0.0"
