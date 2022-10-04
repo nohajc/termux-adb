@@ -62,6 +62,7 @@ hook! {
     }
 }
 
+#[no_mangle]
 pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
     let real_open = real2!(open);
 
