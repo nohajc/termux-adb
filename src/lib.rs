@@ -4,7 +4,7 @@
 extern crate lazy_static;
 
 use std::{
-    ffi::{CString, CStr, VaList},
+    ffi::{CString, CStr},
     fs::File,
     io::Write,
     os::raw::{c_char, c_int},
@@ -24,9 +24,16 @@ lazy_static! {
 const BASE_DIR_ORIG: &str = "/dev/bus/usb";
 const BASE_DIR_REMAPPED: &str = "./fakedev/bus/usb";
 
+// fn init_log_file() {
+//     let mut logf = LOG.lock().unwrap();
+//     *logf = Some(File::create("./tadb-log.txt").unwrap())
+// }
+
 macro_rules! log {
     ($($arg:tt)*) => {
-        _ = writeln!(&mut*LOG.lock().unwrap(), $($arg)*);
+        // init_log_file();
+        // _ = writeln!(LOG.lock().unwrap().as_ref().unwrap(), $($arg)*);
+        _ = writeln!(&mut *LOG.lock().unwrap(), $($arg)*);
     };
 }
 
@@ -62,32 +69,35 @@ hook! {
     }
 }
 
-hook! {
-    unsafe fn __open_2(pathname: *const c_char, flags: c_int) -> c_int => tadb_open_2 {
-        let real_open = real!(__open_2);
-        let name = to_string(CStr::from_ptr(pathname));
+type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
 
-        log!("[TADB] called __open_2 with name={} flags={}", name, flags);
-        let result = real_open(pathname, flags);
+#[no_mangle]
+pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
+    // return -1;
+    // let real_open = real2!(open);
+    // There is some problem with caching the real function value (TODO: fix)
+    let real_open: OpenFn = std::mem::transmute(redhook::ld_preload::dlsym_next("open\0"));
+    let fn_ptr: *const c_void = std::mem::transmute(&open);
+    eprintln!("DEBUG hook: {:?}", fn_ptr);
+    let real_fn_ptr: *const c_void = std::mem::transmute(real_open);
+    eprintln!("DEBUG real: {:?}", real_fn_ptr);
 
-        log!("[TADB] __open_2 returned fd with value {}", result);
-        result
+    let name = to_string(CStr::from_ptr(pathname));
+    eprintln!("DEBUG name: {}", name);
+    // prevent infinite recursion when logfile is first initialized
+    if name != "./tadb-log.txt" {
+        log!("[TADB] called open with pathname={} flags={}", name, flags);
     }
+
+    let result = if (flags & O_CREAT) == 0 {
+        real_open(pathname, flags)
+    } else {
+        real_open(pathname, flags, args.arg::<mode_t>())
+    };
+
+    // prevent infinite recursion when logfile is first initialized
+    if name != "./tadb-log.txt" {
+        log!("[TADB] open returned fd with value {}", result);
+    }
+    result
 }
-
-// #[no_mangle]
-// pub unsafe extern fn open(pathname: *const c_char, flags: c_int) -> c_int {
-//     // let fn_ptr: *const c_void = std::mem::transmute(&open);
-//     // log!("[TADB] called open at {:?}", fn_ptr);
-//     let real_open = real2!(open);
-//     // let real_fn_ptr: *const c_void = std::mem::transmute(real_open);
-//     // log!("[TADB] real open at {:?}", real_fn_ptr);
-
-//     let name = to_string(CStr::from_ptr(pathname));
-
-//     log!("[TADB] called open with name={} flags={}", name, flags);
-//     let result = real_open(pathname, flags);
-
-//     log!("[TADB] open returned fd with value {}", result);
-//     result
-// }
