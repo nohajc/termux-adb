@@ -8,11 +8,11 @@ use std::{
     ffi::{CString, CStr},
     fs::File,
     io::Write,
-    os::raw::{c_char, c_int, c_void},
+    os::raw::{c_char, c_int},
     sync::Mutex,
 };
 
-use libc::{DIR, dirent, O_CREAT, mode_t, size_t, ssize_t};
+use libc::{DIR, dirent, O_CREAT, mode_t};
 
 use redhook::{
     hook, real, real2,
@@ -27,15 +27,8 @@ lazy_static! {
 const BASE_DIR_ORIG: &str = "/dev/bus/usb";
 const BASE_DIR_REMAPPED: &str = "./fakedev/bus/usb";
 
-// fn init_log_file() {
-//     let mut logf = LOG.lock().unwrap();
-//     *logf = Some(File::create("./tadb-log.txt").unwrap())
-// }
-
 macro_rules! log {
     ($($arg:tt)*) => {
-        // init_log_file();
-        // _ = writeln!(LOG.lock().unwrap().as_ref().unwrap(), $($arg)*);
         _ = writeln!(&mut *LOG.lock().unwrap(), $($arg)*);
     };
 }
@@ -86,25 +79,13 @@ hook! {
     }
 }
 
-// hook! {
-//     unsafe fn read(fd: c_int, buf: *mut c_void, nbytes: size_t) -> ssize_t => tadb_read {
-//         let result = real!(read)(fd, buf, nbytes);
-//         result
-//     }
-// }
-
 type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
 
 #[no_mangle]
 pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
-    // return -1;
     // let real_open = real2!(open);
     // There is some problem with caching the real function value (TODO: fix)
     let real_open: OpenFn = std::mem::transmute(redhook::ld_preload::dlsym_next("open\0"));
-    // let fn_ptr: *const c_void = std::mem::transmute(&open);
-    // eprintln!("DEBUG hook: {:?}", fn_ptr);
-    // let real_fn_ptr: *const c_void = std::mem::transmute(real_open);
-    // eprintln!("DEBUG real: {:?}", real_fn_ptr);
 
     let name = to_string(CStr::from_ptr(pathname));
     // eprintln!("DEBUG name: {}", name);
