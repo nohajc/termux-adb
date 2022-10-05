@@ -18,7 +18,7 @@ use redhook::{
     hook, real, real2,
 };
 
-use nix::unistd;
+use nix::unistd::{lseek, Whence};
 
 lazy_static! {
     static ref LOG: Mutex<File> = Mutex::new(File::create("./tadb-log.txt").unwrap());
@@ -101,9 +101,9 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
     // let real_open = real2!(open);
     // There is some problem with caching the real function value (TODO: fix)
     let real_open: OpenFn = std::mem::transmute(redhook::ld_preload::dlsym_next("open\0"));
-    let fn_ptr: *const c_void = std::mem::transmute(&open);
+    // let fn_ptr: *const c_void = std::mem::transmute(&open);
     // eprintln!("DEBUG hook: {:?}", fn_ptr);
-    let real_fn_ptr: *const c_void = std::mem::transmute(real_open);
+    // let real_fn_ptr: *const c_void = std::mem::transmute(real_open);
     // eprintln!("DEBUG real: {:?}", real_fn_ptr);
 
     let name = to_string(CStr::from_ptr(pathname));
@@ -116,6 +116,9 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
     if name.starts_with("/dev/bus/usb") {
         if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
             if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
+                if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
+                    log!("[TADB] error seeking fd {}: {}", usb_fd, e);
+                }
                 log!("[TADB] open hook returning fd with value {}", usb_fd);
                 return usb_fd;
             }
