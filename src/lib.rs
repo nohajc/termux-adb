@@ -4,14 +4,15 @@
 extern crate lazy_static;
 
 use std::{
+    env,
     ffi::{CString, CStr},
     fs::File,
     io::Write,
-    os::raw::{c_char, c_int},
+    os::raw::{c_char, c_int, c_void},
     sync::Mutex,
 };
 
-use libc::{DIR, dirent, O_CREAT, mode_t, c_void};
+use libc::{DIR, dirent, O_CREAT, mode_t, c_void, size_t, ssize_t};
 
 use redhook::{
     hook, real, real2,
@@ -69,6 +70,24 @@ hook! {
     }
 }
 
+hook! {
+    unsafe fn close(fd: c_int) -> c_int => tadb_close {
+        if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
+            if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
+                // usb fd must not be closed
+                if usb_fd == fd {
+                    return 0;
+                }
+            }
+        }
+        real!(close)(fd)
+    }
+}
+
+hook! {
+    unsafe fn read(fd: c_int, buf: *mut c_void, nbytes: size_t)
+}
+
 type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
 
 #[no_mangle]
@@ -78,15 +97,24 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
     // There is some problem with caching the real function value (TODO: fix)
     let real_open: OpenFn = std::mem::transmute(redhook::ld_preload::dlsym_next("open\0"));
     let fn_ptr: *const c_void = std::mem::transmute(&open);
-    eprintln!("DEBUG hook: {:?}", fn_ptr);
+    // eprintln!("DEBUG hook: {:?}", fn_ptr);
     let real_fn_ptr: *const c_void = std::mem::transmute(real_open);
-    eprintln!("DEBUG real: {:?}", real_fn_ptr);
+    // eprintln!("DEBUG real: {:?}", real_fn_ptr);
 
     let name = to_string(CStr::from_ptr(pathname));
-    eprintln!("DEBUG name: {}", name);
+    // eprintln!("DEBUG name: {}", name);
     // prevent infinite recursion when logfile is first initialized
     if name != "./tadb-log.txt" {
         log!("[TADB] called open with pathname={} flags={}", name, flags);
+    }
+
+    if name.starts_with("/dev/bus/usb") {
+        if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
+            if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
+                log!("[TADB] open hook returning fd with value {}", usb_fd);
+                return usb_fd;
+            }
+        }
     }
 
     let result = if (flags & O_CREAT) == 0 {
