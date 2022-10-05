@@ -2,7 +2,7 @@ use std::{process::{Command, ExitCode, ExitStatus}, ffi::OsStr, io, time::Durati
 use nix::{unistd, sys::signal};
 use sysinfo::{SystemExt, RefreshKind, ProcessRefreshKind, ProcessExt, Pid};
 
-fn exec_adb<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(args: I) -> io::Result<ExitStatus> {
+fn run_adb<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(args: I) -> io::Result<ExitStatus> {
     Command::new("adb").args(args).status()
 }
 
@@ -14,12 +14,12 @@ fn wait_for(pid: Pid) {
 }
 
 fn main() -> ExitCode {
-    if let Err(e) = exec_adb(["kill-server"]) {
+    if let Err(e) = run_adb(["kill-server"]) {
         eprintln!("{}", e);
         return ExitCode::FAILURE;
     }
 
-    if let Err(e) = exec_adb(["start-server"]) {
+    if let Err(e) = run_adb(["start-server"]) {
         eprintln!("{}", e);
         return ExitCode::FAILURE;
     }
