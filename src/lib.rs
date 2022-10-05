@@ -12,11 +12,13 @@ use std::{
     sync::Mutex,
 };
 
-use libc::{DIR, dirent, O_CREAT, mode_t, c_void, size_t, ssize_t};
+use libc::{DIR, dirent, O_CREAT, mode_t, size_t, ssize_t};
 
 use redhook::{
     hook, real, real2,
 };
+
+use nix::unistd;
 
 lazy_static! {
     static ref LOG: Mutex<File> = Mutex::new(File::create("./tadb-log.txt").unwrap());
@@ -84,9 +86,12 @@ hook! {
     }
 }
 
-hook! {
-    unsafe fn read(fd: c_int, buf: *mut c_void, nbytes: size_t)
-}
+// hook! {
+//     unsafe fn read(fd: c_int, buf: *mut c_void, nbytes: size_t) -> ssize_t => tadb_read {
+//         let result = real!(read)(fd, buf, nbytes);
+//         result
+//     }
+// }
 
 type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
 
