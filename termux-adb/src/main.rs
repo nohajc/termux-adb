@@ -67,6 +67,8 @@ fn run() -> anyhow::Result<()> {
 
     match (env::var("TERMUX_USB_DEV"), env::var("TERMUX_USB_FD")) {
         (Ok(termux_usb_dev), Ok(termux_usb_fd)) => {
+            println!("{}: fd = {}", &termux_usb_dev, termux_usb_fd);
+
             // 4. executes `adb kill-server && LD_PRELOAD=libadbhooks.so adb start-server`
             // (with TERMUX_USB_DEV and TERMUX_USB_FD env vars)
             let kill_status = run_adb_kill_server()?;
@@ -92,6 +94,7 @@ fn run() -> anyhow::Result<()> {
             // 1. parses output of `termux-usb -l`
             let usb_dev_path = get_termux_usb_list()
                 .into_iter().next().context("error: no usb device found")?;
+            println!("using {}", &usb_dev_path);
 
             // 2. sets environment variable TERMUX_USB_DEV={usb_dev_path}
             // 3. executes termux-usb -e termux-adb -E -r {usb_dev_path}
