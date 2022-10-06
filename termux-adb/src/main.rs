@@ -34,7 +34,6 @@ fn new_signal_receiver() -> anyhow::Result<Receiver<c_int>> {
     let (sender, receiver) = bounded(128);
     thread::spawn(move || {
         for sig in signals.forever() {
-            println!("received signal {:?}", sig);
             sender.send(sig).expect("error processing signal");
         }
     });
@@ -67,6 +66,9 @@ fn wait_for(pid: Pid, signals: Receiver<c_int>) {
                 // so instead of checking if adb is alive
                 // we'll switch to actively trying to kill it
                 kill_signal = Some(Signal::SIGTERM);
+                if let Err(_) = signal::kill(pid, kill_signal) {
+                    break;
+                }
             }
         }
     }
