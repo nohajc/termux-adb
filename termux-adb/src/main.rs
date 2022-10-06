@@ -1,6 +1,17 @@
-use std::{process::{Command, ExitCode, ExitStatus}, ffi::OsStr, io, time::Duration};
+use std::{process::{Command, ExitCode, ExitStatus}, ffi::OsStr, io, time::Duration, str};
 use nix::{unistd, sys::signal};
 use sysinfo::{SystemExt, RefreshKind, ProcessRefreshKind, ProcessExt, Pid};
+
+fn get_termux_usb_list() -> Vec<String> {
+    if let Ok(out) = Command::new("termux-usb").arg("-l").output() {
+        if let Ok(stdout) = str::from_utf8(&out.stdout) {
+            if let Ok(lst) = serde_json::from_str(stdout) {
+                return lst;
+            }
+        }
+    }
+    vec![]
+}
 
 fn run_adb<I: IntoIterator<Item = S>, S: AsRef<OsStr>>(args: I) -> io::Result<ExitStatus> {
     Command::new("adb").args(args).status()
