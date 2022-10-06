@@ -142,6 +142,8 @@ fn run() -> anyhow::Result<()> {
                     .with_processes(ProcessRefreshKind::new())
             );
 
+            // 5. attach signal handler which kills adb before termux-adb is terminated itself
+            // 6. finds adb server PID and waits for it
             if let Some(p) = system.processes_by_exact_name("adb").next() {
                 wait_for(p.pid(), new_signal_receiver()?);
             };
