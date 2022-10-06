@@ -72,7 +72,9 @@ fn run() -> anyhow::Result<()> {
         .context("could not get directory of the executable")?
         .join("libadbhooks.so");
 
-    // TODO: check if adb_hooks_path exists
+    if !adb_hooks_path.exists() {
+        return Err(anyhow!("error: could not find libadbhooks.so"))
+    }
 
     match (env::var("TERMUX_USB_DEV"), env::var("TERMUX_USB_FD")) {
         (Ok(termux_usb_dev), Ok(termux_usb_fd)) => {
