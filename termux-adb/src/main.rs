@@ -57,6 +57,13 @@ fn run_adb_start_server(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_pat
         .status()
 }
 
+// TODO: termux-adb could continually keep track of usb devices and send valid
+// file descriptors to libadbhooks.so using some IPC mechanism like unix domain socket
+//
+// for that to work though, it has to keep execing itself through termux-usb
+// but not restart adb server each time; that means we want to check if libadbhooks.so
+// is already injected and that can be deremined by reading from procfs memory map
+// (https://docs.rs/procfs/latest/procfs/process/struct.Process.html#method.maps)
 fn run() -> anyhow::Result<()> {
     check_dependencies()?;
 
@@ -64,6 +71,8 @@ fn run() -> anyhow::Result<()> {
     let adb_hooks_path = termux_adb_path.parent()
         .context("could not get directory of the executable")?
         .join("libadbhooks.so");
+
+    // TODO: check if adb_hooks_path exists
 
     match (env::var("TERMUX_USB_DEV"), env::var("TERMUX_USB_FD")) {
         (Ok(termux_usb_dev), Ok(termux_usb_fd)) => {
