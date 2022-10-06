@@ -2,12 +2,20 @@ use std::{
     env,
     process::{Command, ExitCode, ExitStatus},
     io, time::Duration, str,
-    os::unix::process::CommandExt, path::Path,
+    os::{unix::process::CommandExt, raw::c_int},
+    path::Path, thread,
 };
 use anyhow::{anyhow, Context};
-use nix::{unistd, sys::signal};
+use nix::{unistd, sys::signal::{self, Signal}};
 use sysinfo::{SystemExt, RefreshKind, ProcessRefreshKind, ProcessExt, Pid};
 use which::which;
+
+use crossbeam_channel::{bounded, tick, Receiver, select};
+
+use signal_hook::{
+    consts::signal::*,
+    iterator::Signals,
+};
 
 fn get_termux_usb_list() -> Vec<String> {
     if let Ok(out) = Command::new("termux-usb").arg("-l").output() {
@@ -20,11 +28,48 @@ fn get_termux_usb_list() -> Vec<String> {
     vec![]
 }
 
-fn wait_for(pid: Pid) {
+fn new_signal_receiver() -> anyhow::Result<Receiver<c_int>> {
+    let mut signals = Signals::new(&[SIGINT, SIGTERM, SIGQUIT])?;
+
+    let (sender, receiver) = bounded(128);
+    thread::spawn(move || {
+        for sig in signals.forever() {
+            println!("received signal {:?}", sig);
+            sender.send(sig).expect("error processing signal");
+        }
+    });
+
+    Ok(receiver)
+}
+
+fn wait_for(pid: Pid, signals: Receiver<c_int>) {
     let pid = unistd::Pid::from_raw(i32::from(pid));
-    while let Ok(()) = signal::kill(pid, None) {
-        std::thread::sleep(Duration::from_secs(1))
-    };
+    let ticker = tick(Duration::from_secs(1));
+
+    let mut kill_signal = None;
+    let mut kill_cnt = 0;
+    loop {
+        select! {
+            recv(ticker) -> _ => {
+                if let Some(_) = kill_signal {
+                    kill_cnt += 1;
+                    if kill_cnt > 3 {
+                        kill_signal = Some(Signal::SIGKILL);
+                    }
+                }
+
+                if let Err(_) = signal::kill(pid, kill_signal) {
+                    break;
+                }
+            }
+            recv(signals) -> _ => {
+                // we received a termination request
+                // so instead of checking if adb is alive
+                // we'll switch to actively trying to kill it
+                kill_signal = Some(Signal::SIGTERM);
+            }
+        }
+    }
 }
 
 fn run_under_termux_usb(usb_dev_path: &str, termux_adb_path: &Path) {
@@ -98,7 +143,7 @@ fn run() -> anyhow::Result<()> {
             );
 
             if let Some(p) = system.processes_by_exact_name("adb").next() {
-                wait_for(p.pid());
+                wait_for(p.pid(), new_signal_receiver()?);
             };
         }
         _ => {
