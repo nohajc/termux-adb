@@ -86,7 +86,7 @@ fn dirent_new(off: i64, typ: u8, name: &OsStr) -> dirent {
 }
 
 lazy_static! {
-    static ref DIR_MAP: Mutex<HashMap<PathBuf, DirStream>> = Mutex::new({
+    static ref DIR_MAP: HashMap<PathBuf, DirStream> = {
         let mut dir_map = HashMap::new();
         if let Ok(usb_dev_path) = env::var("TERMUX_USB_DEV").map(|str| PathBuf::from(str)) {
             if let Some(usb_dev_name) = usb_dev_path.file_name() {
@@ -111,7 +111,7 @@ lazy_static! {
             }
         }
         dir_map
-    });
+    };
 }
 
 hook! {
