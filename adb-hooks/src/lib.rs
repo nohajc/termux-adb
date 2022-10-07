@@ -98,11 +98,15 @@ lazy_static! {
                 while current_dir.pop() {
                     dir_map.insert(current_dir.clone(), DirStream{
                         pos: 0,
-                        entry: last_entry
+                        entry: last_entry.clone(),
                     });
                     last_entry = dirent_new(
                         0, DT_DIR, current_dir.as_os_str()
-                    )
+                    );
+
+                    if current_dir.as_os_str() == BASE_DIR_ORIG {
+                        break;
+                    }
                 }
             }
         }
@@ -166,7 +170,7 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
         log!("[TADB] called open with pathname={} flags={}", name, flags);
     }
 
-    if name.starts_with("/dev/bus/usb") {
+    if name.starts_with(BASE_DIR_ORIG) {
         if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
             if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
                 if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
