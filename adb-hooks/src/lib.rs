@@ -15,7 +15,7 @@ use std::{
 
 use std::os::unix::ffi::OsStrExt;
 
-use libc::{DIR, dirent, O_CREAT, mode_t, DT_CHR, DT_DIR};
+use libc::{DIR, dirent, O_CREAT, mode_t, DT_CHR, DT_DIR, off_t, c_ushort, c_uchar};
 
 use rand::Rng;
 
@@ -67,17 +67,17 @@ impl NameSetter for dirent {
         for (i, j) in self.d_name.iter_mut().zip(
             name.as_bytes().iter().chain([0].iter())
         ) {
-            *i = *j as i8;
+            *i = *j as c_char;
         }
     }
 }
 
-fn dirent_new(off: i64, typ: u8, name: &OsStr) -> dirent {
+fn dirent_new(off: off_t, typ: c_uchar, name: &OsStr) -> dirent {
     let mut rng = rand::thread_rng();
     let mut entry = dirent {
         d_ino: rng.gen(),
         d_off: off,
-        d_reclen: mem::size_of::<dirent>() as u16,
+        d_reclen: mem::size_of::<dirent>() as c_ushort,
         d_type: typ,
         d_name: [0; 256],
     };
