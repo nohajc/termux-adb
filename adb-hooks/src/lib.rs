@@ -36,7 +36,6 @@ lazy_static! {
 }
 
 const BASE_DIR_ORIG: &str = "/dev/bus/usb";
-// const BASE_DIR_REMAPPED: &str = "./fakedev/bus/usb";
 
 macro_rules! log {
     ($($arg:tt)*) => {
@@ -45,7 +44,6 @@ macro_rules! log {
 }
 
 fn to_string(s: &CStr) -> String {
-    // OsStr::from_bytes(s.to_bytes()).to_owned()
     s.to_string_lossy().into_owned()
 }
 
