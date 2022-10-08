@@ -5,7 +5,7 @@ extern crate lazy_static;
 
 use std::{
     env,
-    ffi::{CString, CStr, OsStr},
+    ffi::{CStr, OsStr},
     fs::File,
     io::Write,
     mem,
@@ -30,7 +30,7 @@ lazy_static! {
 }
 
 const BASE_DIR_ORIG: &str = "/dev/bus/usb";
-const BASE_DIR_REMAPPED: &str = "./fakedev/bus/usb";
+// const BASE_DIR_REMAPPED: &str = "./fakedev/bus/usb";
 
 macro_rules! log {
     ($($arg:tt)*) => {
@@ -52,6 +52,7 @@ fn to_cstr(b: &[c_char]) -> &CStr {
 
 // our directory structure will always be flat
 // so we can have just one dirent per DirStream
+#[derive(Clone)]
 struct DirStream {
     pos: i32,
     entry: dirent,
@@ -119,36 +120,54 @@ enum HookedDir {
     Virtual(DirStream)
 }
 
+impl From<HookedDir> for *mut DIR {
+    fn from(hd: HookedDir) -> Self {
+        Box::into_raw(Box::new(hd)) as Self
+    }
+}
+
 hook! {
     unsafe fn opendir(name: *const c_char) -> *mut DIR => tadb_opendir {
         let dir_name = to_string(CStr::from_ptr(name));
-        let remapped_name = dir_name.replacen(BASE_DIR_ORIG, BASE_DIR_REMAPPED, 1);
-        let remapped_name_c = CString::new(remapped_name.as_str()).unwrap();
 
-        log!("[TADB] called opendir with {}, remapping to {}", &dir_name, &remapped_name);
+        if dir_name.starts_with(BASE_DIR_ORIG) {
+            if let Some(dirstream) = DIR_MAP.get(&PathBuf::from(&dir_name)) {
+                log!("[TADB] called opendir with {}, remapping to virtual DirStream", &dir_name);
+                return HookedDir::Virtual(dirstream.to_owned()).into();
+            }
+        }
 
-        let dir = real!(opendir)(remapped_name_c.as_ptr());
-        let result = Box::new(HookedDir::Native(dir));
-        Box::into_raw(result) as *mut DIR
+        log!("[TADB] called opendir with {}", &dir_name);
+        let dir = real!(opendir)(name);
+        HookedDir::Native(dir).into()
     }
 }
 
 hook! {
     unsafe fn closedir(dirp: *mut DIR) -> c_int => tadb_closedir {
+        if dirp.is_null() {
+            return real!(closedir)(dirp);
+        }
+
         let hooked_dir = Box::from_raw(dirp as *mut HookedDir);
         match hooked_dir.as_ref() {
             &HookedDir::Native(dirp) => real!(closedir)(dirp),
-            &HookedDir::Virtual(ref _dirstream) => 0 // TODO
+            // nothing to do, hooked_dir along with DirStream
+            // will be dropped at the end of this function
+            &HookedDir::Virtual(_) => 0
         }
     }
 }
 
 hook! {
     unsafe fn readdir(dirp: *mut DIR) -> *mut dirent => tadb_readdir {
-        let hooked_dir = &*(dirp as *mut HookedDir);
+        if dirp.is_null() {
+            return real!(readdir)(dirp);
+        }
 
+        let hooked_dir = &mut *(dirp as *mut HookedDir);
         match hooked_dir {
-            &HookedDir::Native(dirp) => {
+            &mut HookedDir::Native(dirp) => {
                 log!("[TADB] called readdir with native DIR* {:?}", dirp);
                 let result = real!(readdir)(dirp);
                 if let Some(r) = result.as_ref() {
@@ -156,8 +175,16 @@ hook! {
                 }
                 result
             }
-            &HookedDir::Virtual(ref _dirstream) => {
-                null_mut() // TODO
+            &mut HookedDir::Virtual(DirStream{ref mut pos, ref mut entry}) => {
+                log!("[TADB] called readdir with virtual DirStream");
+                match pos {
+                    0 => {
+                        *pos += 1;
+                        log!("[TADB] readdir returned dirent with d_name={}", to_string(to_cstr(&entry.d_name)));
+                        entry as *mut dirent
+                    }
+                    _ => null_mut()
+                }
             }
         }
     }
@@ -192,7 +219,7 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
         log!("[TADB] called open with pathname={} flags={}", name, flags);
     }
 
-    if name.starts_with(BASE_DIR_ORIG) {
+    if name.starts_with(BASE_DIR_ORIG) { // assuming there is always only one usb device
         if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
             if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
                 if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
