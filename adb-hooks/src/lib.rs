@@ -102,7 +102,7 @@ lazy_static! {
                         entry: last_entry.clone(),
                     });
                     last_entry = dirent_new(
-                        0, DT_DIR, current_dir.as_os_str()
+                        0, DT_DIR, current_dir.file_name().unwrap()
                     );
 
                     if current_dir.as_os_str() == BASE_DIR_ORIG {
