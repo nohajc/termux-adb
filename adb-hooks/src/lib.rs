@@ -224,23 +224,28 @@ lazy_static! {
 
 #[no_mangle]
 pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
-    let name = to_string(CStr::from_ptr(pathname));
-    // prevent infinite recursion when logfile is first initialized
-    if name != "./tadb-log.txt" {
-        log!("[TADB] called open with pathname={} flags={}", name, flags);
-    }
+    let name = if !pathname.is_null() {
+        let name = to_string(CStr::from_ptr(pathname));
+        // prevent infinite recursion when logfile is first initialized
+        if name != "./tadb-log.txt" {
+            log!("[TADB] called open with pathname={} flags={}", name, flags);
+        }
 
-    if name.starts_with(BASE_DIR_ORIG) { // assuming there is always only one usb device
-        if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
-            if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
-                if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
-                    log!("[TADB] error seeking fd {}: {}", usb_fd, e);
+        if name.starts_with(BASE_DIR_ORIG) { // assuming there is always only one usb device
+            if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
+                if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
+                    if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
+                        log!("[TADB] error seeking fd {}: {}", usb_fd, e);
+                    }
+                    log!("[TADB] open hook returning fd with value {}", usb_fd);
+                    return usb_fd;
                 }
-                log!("[TADB] open hook returning fd with value {}", usb_fd);
-                return usb_fd;
             }
         }
-    }
+        name
+    } else {
+        "".to_owned()
+    };
 
     let result = if (flags & O_CREAT) == 0 {
         REAL_OPEN(pathname, flags)
