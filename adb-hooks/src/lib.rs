@@ -10,7 +10,7 @@ use std::{
     io::Write,
     mem,
     os::raw::{c_char, c_int},
-    sync::Mutex, collections::HashMap, path::PathBuf,
+    sync::Mutex, collections::HashMap, path::PathBuf, ptr::null_mut,
 };
 
 use std::os::unix::ffi::OsStrExt;
@@ -114,30 +114,52 @@ lazy_static! {
     };
 }
 
+enum HookedDir {
+    Native(*mut DIR),
+    Virtual(DirStream)
+}
+
 hook! {
     unsafe fn opendir(name: *const c_char) -> *mut DIR => tadb_opendir {
         let dir_name = to_string(CStr::from_ptr(name));
         let remapped_name = dir_name.replacen(BASE_DIR_ORIG, BASE_DIR_REMAPPED, 1);
         let remapped_name_c = CString::new(remapped_name.as_str()).unwrap();
+
         log!("[TADB] called opendir with {}, remapping to {}", &dir_name, &remapped_name);
-        real!(opendir)(remapped_name_c.as_ptr())
+
+        let dir = real!(opendir)(remapped_name_c.as_ptr());
+        let result = Box::new(HookedDir::Native(dir));
+        Box::into_raw(result) as *mut DIR
     }
 }
 
 hook! {
     unsafe fn closedir(dirp: *mut DIR) -> c_int => tadb_closedir {
-        real!(closedir)(dirp)
+        let hooked_dir = Box::from_raw(dirp as *mut HookedDir);
+        match hooked_dir.as_ref() {
+            &HookedDir::Native(dirp) => real!(closedir)(dirp),
+            &HookedDir::Virtual(ref _dirstream) => 0 // TODO
+        }
     }
 }
 
 hook! {
     unsafe fn readdir(dirp: *mut DIR) -> *mut dirent => tadb_readdir {
-        log!("[TADB] called readdir with {:?}", dirp);
-        let result = real!(readdir)(dirp);
-        if let Some(r) = result.as_ref() {
-            log!("[TADB] readdir returned dirent with d_name={}", to_string(to_cstr(&r.d_name)));
+        let hooked_dir = &*(dirp as *mut HookedDir);
+
+        match hooked_dir {
+            &HookedDir::Native(dirp) => {
+                log!("[TADB] called readdir with native DIR* {:?}", dirp);
+                let result = real!(readdir)(dirp);
+                if let Some(r) = result.as_ref() {
+                    log!("[TADB] readdir returned dirent with d_name={}", to_string(to_cstr(&r.d_name)));
+                }
+                result
+            }
+            &HookedDir::Virtual(ref _dirstream) => {
+                null_mut() // TODO
+            }
         }
-        result
     }
 }
 
