@@ -205,12 +205,15 @@ hook! {
 }
 
 type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
+lazy_static! {
+    static ref REAL_OPEN: OpenFn = unsafe{ mem::transmute(redhook::ld_preload::dlsym_next("open\0")) };
+}
 
 #[no_mangle]
 pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
     // let real_open = real2!(open);
     // There is some problem with caching the real function value (TODO: fix)
-    let real_open: OpenFn = mem::transmute(redhook::ld_preload::dlsym_next("open\0"));
+    // let real_open: OpenFn = mem::transmute(redhook::ld_preload::dlsym_next("open\0"));
 
     let name = to_string(CStr::from_ptr(pathname));
     // eprintln!("DEBUG name: {}", name);
@@ -232,9 +235,9 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
     }
 
     let result = if (flags & O_CREAT) == 0 {
-        real_open(pathname, flags)
+        REAL_OPEN(pathname, flags)
     } else {
-        real_open(pathname, flags, args.arg::<mode_t>())
+        REAL_OPEN(pathname, flags, args.arg::<mode_t>())
     };
 
     // prevent infinite recursion when logfile is first initialized
