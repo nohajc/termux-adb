@@ -9,13 +9,19 @@ use std::{
     fs::File,
     io::Write,
     mem,
-    os::raw::{c_char, c_int},
-    sync::Mutex, collections::HashMap, path::PathBuf, ptr::null_mut,
+    os::{
+        unix::ffi::OsStrExt,
+        raw::{c_char, c_int}
+    },
+    sync::Mutex, collections::HashMap,
+    path::PathBuf, ptr::null_mut,
 };
 
-use std::os::unix::ffi::OsStrExt;
-
-use libc::{DIR, dirent, O_CREAT, mode_t, DT_CHR, DT_DIR, off_t, c_ushort, c_uchar};
+use libc::{
+    DIR, dirent, O_CREAT, mode_t,
+    DT_CHR, DT_DIR, off_t,
+    c_ushort, c_uchar
+};
 
 use rand::Rng;
 
