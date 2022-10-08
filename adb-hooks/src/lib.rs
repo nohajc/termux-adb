@@ -46,10 +46,11 @@ macro_rules! log {
 
 fn to_string(s: &CStr) -> String {
     // OsStr::from_bytes(s.to_bytes()).to_owned()
-    match s.to_str() {
-        Ok(s) => s.to_owned(),
-        Err(e) => e.to_string(),
-    }
+    s.to_string_lossy().into_owned()
+}
+
+fn to_os_str(s: &CStr) -> &OsStr {
+    OsStr::from_bytes(s.to_bytes())
 }
 
 fn to_cstr(b: &[c_char]) -> &CStr {
@@ -134,16 +135,22 @@ impl From<HookedDir> for *mut DIR {
 
 hook! {
     unsafe fn opendir(name: *const c_char) -> *mut DIR => tadb_opendir {
-        let dir_name = to_string(CStr::from_ptr(name));
+        if name.is_null() {
+            return real!(opendir)(name);
+        }
 
-        if dir_name.starts_with(BASE_DIR_ORIG) {
-            if let Some(dirstream) = DIR_MAP.get(&PathBuf::from(&dir_name)) {
-                log!("[TADB] called opendir with {}, remapping to virtual DirStream", &dir_name);
+        let name_cstr = CStr::from_ptr(name);
+        let name_str = to_string(name_cstr);
+
+        if name_str.starts_with(BASE_DIR_ORIG) {
+            let name_osstr = to_os_str(name_cstr);
+            if let Some(dirstream) = DIR_MAP.get(&PathBuf::from(name_osstr)) {
+                log!("[TADB] called opendir with {}, remapping to virtual DirStream", &name_str);
                 return HookedDir::Virtual(dirstream.to_owned()).into();
             }
         }
 
-        log!("[TADB] called opendir with {}", &dir_name);
+        log!("[TADB] called opendir with {}", &name_str);
         let dir = real!(opendir)(name);
         HookedDir::Native(dir).into()
     }
