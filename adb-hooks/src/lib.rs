@@ -20,7 +20,7 @@ use libc::{DIR, dirent, O_CREAT, mode_t, DT_CHR, DT_DIR, off_t, c_ushort, c_ucha
 use rand::Rng;
 
 use redhook::{
-    hook, real, real2,
+    hook, real,
 };
 
 use nix::unistd::{lseek, Whence};
@@ -211,12 +211,7 @@ lazy_static! {
 
 #[no_mangle]
 pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
-    // let real_open = real2!(open);
-    // There is some problem with caching the real function value (TODO: fix)
-    // let real_open: OpenFn = mem::transmute(redhook::ld_preload::dlsym_next("open\0"));
-
     let name = to_string(CStr::from_ptr(pathname));
-    // eprintln!("DEBUG name: {}", name);
     // prevent infinite recursion when logfile is first initialized
     if name != "./tadb-log.txt" {
         log!("[TADB] called open with pathname={} flags={}", name, flags);
