@@ -132,7 +132,7 @@ lazy_static! {
                     let vid = usb_dev_desc.vendor_id();
                     let pid = usb_dev_desc.product_id();
                     let iser = usb_dev_desc.serial_number_string_index();
-                    log!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
+                    eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
                 }
             }
         }
