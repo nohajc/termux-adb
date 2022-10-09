@@ -201,12 +201,12 @@ fn run() -> anyhow::Result<()> {
                     }
                 });
 
-            daemonize.start()?; // everything below runs in the background
-
             // 1. parses output of `termux-usb -l`
             let usb_dev_path = get_termux_usb_list()
                 .into_iter().next().context("error: no usb device found")?;
             println!("using {}", &usb_dev_path);
+
+            daemonize.start()?; // everything below runs in the background
 
             // 2. sets environment variable TERMUX_USB_DEV={usb_dev_path}
             // 3. executes termux-usb -e termux-adb -E -r {usb_dev_path}
