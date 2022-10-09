@@ -50,6 +50,7 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
     let mut log_file_lines = io::BufReader::new(log_file).lines();
 
     // TODO: first wait for "using /dev/bus/usb.*" with a much longer timeout
+    // TODO: filter lines starting with [TADB]
     for _ in 0..20 { // wait 5 secs for adb to start
         while let Some(msg) = log_file_lines.next().map(
             |ln| ln.ok()

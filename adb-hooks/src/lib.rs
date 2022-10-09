@@ -17,6 +17,7 @@ use std::{
     path::PathBuf, ptr::null_mut, time::Duration,
 };
 
+use anyhow::Context;
 use libc::{
     DIR, dirent, O_CREAT, mode_t,
     DT_CHR, DT_DIR, off_t,
@@ -99,62 +100,64 @@ lazy_static! {
         .map(|usb_fd_str| usb_fd_str.parse::<c_int>().ok()).ok().flatten();
 }
 
+fn init_libusb_device_serial() -> anyhow::Result<String> {
+    eprintln!("[TADB] calling libusb_set_option");
+    unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
+
+    eprintln!("[TADB] reading TERMUX_USB_FD");
+    let usb_fd = TERMUX_USB_FD.context("error: missing TERMUX_USB_FD")?;
+
+    lseek(usb_fd, 0, Whence::SeekSet)
+        .with_context(|| format!("error seeking fd: {}", usb_fd))?;
+
+    let ctx = rusb::Context::new().context("libusb_init error")?;
+
+    eprintln!("[TADB] opening device from {}", usb_fd);
+    let usb_handle = unsafe{
+        ctx.open_device_with_fd(usb_fd).context("error opening device")
+    }?;
+
+    eprintln!("[TADB] getting device from handle");
+    let usb_dev = usb_handle.device();
+
+    eprintln!("[TADB] requesting device descriptor");
+    let usb_dev_desc = usb_dev.device_descriptor()
+        .context("error getting device descriptor")?;
+
+    let vid = usb_dev_desc.vendor_id();
+    let pid = usb_dev_desc.product_id();
+    let iser = usb_dev_desc.serial_number_string_index();
+    eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
+
+    let timeout = Duration::from_secs(1);
+    let languages = usb_handle.read_languages(timeout)
+        .context("error getting supported languages for reading string descriptors")?;
+
+    let sn = usb_handle.read_serial_number_string(
+        languages[0], &usb_dev_desc, timeout
+    ).context("error reading serial number of the device")?;
+
+    Ok(sn)
+}
+
 lazy_static! {
     static ref TERMUX_USB_SERIAL: Option<String> = {
-        eprintln!("[TADB] calling libusb_set_option");
-        unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
-
-        eprintln!("[TADB] reading TERMUX_USB_FD");
-        if let Some(usb_fd) = TERMUX_USB_FD.clone() {
-            if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
-                eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
-            }
-
-            match rusb::Context::new() {
-                Ok(ctx) => {
-                    eprintln!("[TADB] opening device from {}", usb_fd);
-                    match unsafe{ ctx.open_device_with_fd(usb_fd) } {
-                        Ok(usb_handle) => {
-                            eprintln!("[TADB] getting device from handle");
-                            let usb_dev = usb_handle.device();
-                            eprintln!("[TADB] requesting device descriptor");
-                            if let Ok(usb_dev_desc) = usb_dev.device_descriptor() {
-                                let vid = usb_dev_desc.vendor_id();
-                                let pid = usb_dev_desc.product_id();
-                                let iser = usb_dev_desc.serial_number_string_index();
-                                eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
-
-                                let timeout = Duration::from_secs(1);
-                                match usb_handle.read_languages(timeout) {
-                                    Ok(languages) => {
-                                        match usb_handle.read_serial_number_string(languages[0], &usb_dev_desc, timeout) {
-                                            Ok(sn) => return Some(sn),
-                                            Err(e) => eprintln!("[TADB] error reading serial number of the device: {}", e),
-                                        }
-                                    }
-                                    Err(e) => eprintln!("[TADB] error getting supported languages for reading string descriptors: {}", e)
-                                }
-                            }
-                        }
-                        Err(e) => eprintln!("[TADB] error opening device: {}", e)
-                    }
-                }
-                Err(e) => {
-                    eprintln!("[TADB] libusb_init error: {}", e);
-                }
+        match init_libusb_device_serial() {
+            Ok(sn) => Some(sn),
+            Err(e) => {
+                eprintln!("{}", e);
+                None
             }
         }
-
-        None
     };
 }
 
 fn get_usb_device_serial() -> &'static str {
-    TERMUX_USB_SERIAL.as_ref().map(|sn| sn.as_str()).unwrap_or("N/A")
+    TERMUX_USB_SERIAL.as_ref().map(|sn| sn.as_str()).unwrap_or("(no serial number)")
 }
 
 #[ctor]
-fn init_libusb_device_serial() {
+fn libusb_device_serial_ctor() {
     // libusb_init hanged when called as lazy_static from opendir
     // so instead we use global constructor function which resolves the issue
     eprintln!("[TADB] libusb device serial: {}", get_usb_device_serial());
