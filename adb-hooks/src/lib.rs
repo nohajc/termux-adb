@@ -8,7 +8,7 @@ use std::{
     ffi::{CStr, OsStr},
     fs::File,
     io::Write,
-    mem::{self, MaybeUninit},
+    mem,
     os::{
         unix::ffi::OsStrExt,
         raw::{c_char, c_int}
@@ -99,44 +99,23 @@ lazy_static! {
         .map(|usb_fd_str| usb_fd_str.parse::<c_int>().ok()).ok().flatten();
 }
 
-static LIBUSB_CTX: MaybeUninit<rusb::Context> = MaybeUninit::uninit();
+lazy_static! {
+    static ref LIBUSB_CTX: rusb::Result<rusb::Context> = rusb::Context::new();
+}
 
 #[ctor]
 fn init_libusb_device() {
-    let args: Vec<String> = env::args().collect();
-    eprintln!("[TADB] init_libusb_device called by {}", args.join(" "));
     eprintln!("[TADB] calling libusb_set_option");
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
-    eprintln!("[TADB] reading TERMUX_USB_FD");
-    if let Some(usb_fd) = TERMUX_USB_FD.clone() {
-        if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
-            eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
+    // libusb_init hanged when defined as lazy_static and called from opendir
+    // so instead we use global constructor function which resolves the issue
+    match LIBUSB_CTX.clone() {
+        Ok(ctx) => {
+            eprintln!("[TADB] libusb_init success: {:?}", ctx.as_raw());
         }
-
-        // libusb_init hanged when defined as lazy_static and called from opendir
-        // so instead we use global constructor function which resolves the issue
-        match rusb::Context::new() {
-            Ok(ctx) => {
-                eprintln!("[TADB] opening device from {}", usb_fd);
-                match unsafe{ ctx.open_device_with_fd(usb_fd) } {
-                    Ok(usb_handle) => {
-                        eprintln!("[TADB] getting device from handle");
-                        let usb_dev = usb_handle.device();
-                        eprintln!("[TADB] requesting device descriptor");
-                        if let Ok(usb_dev_desc) = usb_dev.device_descriptor() {
-                            let vid = usb_dev_desc.vendor_id();
-                            let pid = usb_dev_desc.product_id();
-                            let iser = usb_dev_desc.serial_number_string_index();
-                            eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
-                        }
-                    }
-                    Err(e) => eprintln!("[TADB] error opening device: {}", e)
-                }
-            }
-            Err(e) => {
-                eprintln!("[TADB] libusb_init error: {}", e);
-            }
+        Err(e) => {
+            eprintln!("[TADB] libusb_init error: {}", e);
         }
     }
 }
@@ -163,6 +142,36 @@ lazy_static! {
                     if current_dir.as_os_str() == BASE_DIR_ORIG {
                         break;
                     }
+                }
+            }
+        }
+
+        eprintln!("[TADB] reading TERMUX_USB_FD");
+        if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+            if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
+                eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
+            }
+
+            match LIBUSB_CTX.clone() {
+                Ok(ctx) => {
+                    eprintln!("[TADB] opening device from {}", usb_fd);
+                    match unsafe{ ctx.open_device_with_fd(usb_fd) } {
+                        Ok(usb_handle) => {
+                            eprintln!("[TADB] getting device from handle");
+                            let usb_dev = usb_handle.device();
+                            eprintln!("[TADB] requesting device descriptor");
+                            if let Ok(usb_dev_desc) = usb_dev.device_descriptor() {
+                                let vid = usb_dev_desc.vendor_id();
+                                let pid = usb_dev_desc.product_id();
+                                let iser = usb_dev_desc.serial_number_string_index();
+                                eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
+                            }
+                        }
+                        Err(e) => eprintln!("[TADB] error opening device: {}", e)
+                    }
+                }
+                Err(e) => {
+                    eprintln!("[TADB] libusb_init error: {}", e);
                 }
             }
         }
