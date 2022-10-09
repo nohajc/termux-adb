@@ -131,20 +131,27 @@ lazy_static! {
             if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
                 eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
             }
-            eprintln!("[TADB] opening device from {}", usb_fd);
-            match unsafe{ rusb::GlobalContext::default().open_device_with_fd(usb_fd) } {
-                Ok(usb_handle) => {
-                    eprintln!("[TADB] getting device from handle");
-                    let usb_dev = usb_handle.device();
-                    eprintln!("[TADB] requesting device descriptor");
-                    if let Ok(usb_dev_desc) = usb_dev.device_descriptor() {
-                        let vid = usb_dev_desc.vendor_id();
-                        let pid = usb_dev_desc.product_id();
-                        let iser = usb_dev_desc.serial_number_string_index();
-                        eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
+            match rusb::Context::new() {
+                Ok(ctx) => {
+                    eprintln!("[TADB] opening device from {}", usb_fd);
+                    match unsafe{ ctx.open_device_with_fd(usb_fd) } {
+                        Ok(usb_handle) => {
+                            eprintln!("[TADB] getting device from handle");
+                            let usb_dev = usb_handle.device();
+                            eprintln!("[TADB] requesting device descriptor");
+                            if let Ok(usb_dev_desc) = usb_dev.device_descriptor() {
+                                let vid = usb_dev_desc.vendor_id();
+                                let pid = usb_dev_desc.product_id();
+                                let iser = usb_dev_desc.serial_number_string_index();
+                                eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
+                            }
+                        }
+                        Err(e) => eprintln!("[TADB] error opening device: {}", e)
                     }
                 }
-                Err(e) => eprintln!("[TADB] error opening device: {}", e)
+                Err(e) => {
+                    eprintln!("[TADB] libusb_init error: {}", e);
+                }
             }
         }
 
