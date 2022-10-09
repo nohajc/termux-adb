@@ -49,19 +49,19 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
 
     let mut log_file_lines = io::BufReader::new(log_file).lines();
 
-    'outer: loop {
+    for _ in 0..20 { // wait 5 secs for adb to start
         while let Some(msg) = log_file_lines.next().map(
             |ln| ln.ok()
         ).flatten() {
             println!("{}", msg);
             if msg == "* daemon started successfully" {
-                break 'outer;
+                return Ok(());
             }
         }
         thread::sleep(Duration::from_millis(250));
     }
 
-    Ok(())
+    Err(anyhow!("error: something went wrong, adb server didn't start"))
 }
 
 fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
