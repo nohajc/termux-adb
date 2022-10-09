@@ -62,7 +62,7 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
     }
 
     let log_file_str = log_file_path.to_string_lossy();
-    let adb_log = log_file_str.trim_start_matches("termux-");
+    let adb_log = log_file_str.replacen("termux-adb.", "adb.", 1);
     Err(anyhow!("error: adb server didn't start, check the log: {}", adb_log))
 }
 
