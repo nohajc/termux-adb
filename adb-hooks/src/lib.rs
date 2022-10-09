@@ -14,7 +14,7 @@ use std::{
         raw::{c_char, c_int}
     },
     sync::Mutex, collections::HashMap,
-    path::PathBuf, ptr::null_mut,
+    path::PathBuf, ptr::null_mut, time::Duration,
 };
 
 use libc::{
@@ -100,7 +100,7 @@ lazy_static! {
 }
 
 lazy_static! {
-    static ref TERMUX_USB_SERIAL: String = {
+    static ref TERMUX_USB_SERIAL: Option<String> = {
         eprintln!("[TADB] calling libusb_set_option");
         unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
@@ -125,6 +125,14 @@ lazy_static! {
                                 let pid = usb_dev_desc.product_id();
                                 let iser = usb_dev_desc.serial_number_string_index();
                                 eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
+
+                                let timeout = Duration::from_secs(1);
+                                if let Ok(languages) = usb_handle.read_languages(timeout) {
+                                    match usb_handle.read_serial_number_string(languages[0], &usb_dev_desc, timeout) {
+                                        Ok(sn) => return Some(sn),
+                                        Err(_) => eprintln!("[TADB] error reading serial number of the device"),
+                                    }
+                                }
                             }
                         }
                         Err(e) => eprintln!("[TADB] error opening device: {}", e)
@@ -136,13 +144,17 @@ lazy_static! {
             }
         }
 
-        "N/A".to_owned()
+        None
     };
+}
+
+fn get_usb_device_serial() -> &'static str {
+    TERMUX_USB_SERIAL.as_ref().map(|sn| sn.as_str()).unwrap_or("N/A")
 }
 
 #[ctor]
 fn init_libusb_device_serial() {
-    eprintln!("[TADB] libusb device serial: {}", TERMUX_USB_SERIAL.as_str());
+    eprintln!("[TADB] libusb device serial: {}", get_usb_device_serial());
 }
 
 lazy_static! {
