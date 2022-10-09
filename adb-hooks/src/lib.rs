@@ -21,7 +21,7 @@ use anyhow::Context;
 use libc::{
     DIR, dirent, O_CREAT, mode_t,
     DT_CHR, DT_DIR, off_t,
-    c_ushort, c_uchar
+    c_ushort, c_uchar, dev_t
 };
 
 use rand::Rng;
@@ -30,7 +30,7 @@ use redhook::{
     hook, real,
 };
 
-use nix::{unistd::{lseek, Whence}, sys::stat::{fstat, major, minor}};
+use nix::{unistd::{lseek, Whence}, sys::stat::fstat};
 use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
 use ctor::ctor;
@@ -152,6 +152,16 @@ fn init_libusb_device_serial() -> anyhow::Result<String> {
     eprintln!("[TADB] device serial path link: {}", dev_path_link);
 
     Ok(serial_number)
+}
+
+pub const fn major(dev: dev_t) -> u64 {
+    ((dev >> 32) & 0xffff_f000) |
+    ((dev >>  8) & 0x0000_0fff)
+}
+
+pub const fn minor(dev: dev_t) -> u64 {
+    ((dev >> 12) & 0xffff_ff00) |
+    ((dev      ) & 0x0000_00ff)
 }
 
 lazy_static! {
