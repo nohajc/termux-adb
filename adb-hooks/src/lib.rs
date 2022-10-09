@@ -100,6 +100,11 @@ lazy_static! {
         .map(|usb_fd_str| usb_fd_str.parse::<c_int>().ok()).ok().flatten();
 }
 
+lazy_static! {
+    static ref TERMUX_USB_DEV: Option<PathBuf> = env::var("TERMUX_USB_DEV")
+        .map(|str| PathBuf::from(str)).ok();
+}
+
 fn init_libusb_device_serial() -> anyhow::Result<String> {
     eprintln!("[TADB] calling libusb_set_option");
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
@@ -191,12 +196,12 @@ fn libusb_device_serial_ctor() {
 lazy_static! {
     static ref DIR_MAP: HashMap<PathBuf, DirStream> = {
         let mut dir_map = HashMap::new();
-        if let Ok(usb_dev_path) = env::var("TERMUX_USB_DEV").map(|str| PathBuf::from(str)) {
+        if let Some(usb_dev_path) = TERMUX_USB_DEV.as_ref() {
             if let Some(usb_dev_name) = usb_dev_path.file_name() {
                 let mut last_entry = dirent_new(
                     0, DT_CHR, usb_dev_name
                 );
-                let mut current_dir = usb_dev_path;
+                let mut current_dir = usb_dev_path.clone();
 
                 while current_dir.pop() {
                     dir_map.insert(current_dir.clone(), DirStream{
@@ -325,13 +330,15 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
             log!("[TADB] called open with pathname={} flags={}", name, flags);
         }
 
-        if name.starts_with(BASE_DIR_ORIG) { // assuming there is always only one usb device
-            if let Some(usb_fd) = TERMUX_USB_FD.clone() {
-                if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
-                    log!("[TADB] error seeking fd {}: {}", usb_fd, e);
+        if let Some(usb_dev_path) = TERMUX_USB_DEV.as_ref() {
+            if &PathBuf::from(&name) == usb_dev_path {
+                if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+                    if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
+                        log!("[TADB] error seeking fd {}: {}", usb_fd, e);
+                    }
+                    log!("[TADB] open hook returning fd with value {}", usb_fd);
+                    return usb_fd;
                 }
-                log!("[TADB] open hook returning fd with value {}", usb_fd);
-                return usb_fd;
             }
         }
         name
