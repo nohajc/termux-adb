@@ -61,7 +61,9 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
         thread::sleep(Duration::from_millis(250));
     }
 
-    Err(anyhow!("error: something went wrong, adb server didn't start"))
+    let log_file_str = log_file_path.to_string_lossy();
+    let adb_log = log_file_str.trim_start_matches("termux-");
+    Err(anyhow!("error: adb server didn't start, check the log: {}", adb_log))
 }
 
 fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
