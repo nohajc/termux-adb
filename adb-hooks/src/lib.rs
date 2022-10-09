@@ -365,7 +365,10 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
                     let seek_status = lseek(serial_fd, 0, Whence::SeekSet);
 
                     match (wr_status, seek_status) {
-                        (Ok(_), Ok(_)) => return serial_fd,
+                        (Ok(_), Ok(_)) => {
+                            log!("[TADB] open hook returning fd with value {}", serial_fd);
+                            return serial_fd
+                        }
                         _ => ()
                     }
                 }
