@@ -133,11 +133,23 @@ fn init_libusb_device_serial() -> anyhow::Result<String> {
     let languages = usb_handle.read_languages(timeout)
         .context("error getting supported languages for reading string descriptors")?;
 
-    let sn = usb_handle.read_serial_number_string(
+    let serial_number = usb_handle.read_serial_number_string(
         languages[0], &usb_dev_desc, timeout
     ).context("error reading serial number of the device")?;
 
-    Ok(sn)
+    let ports = usb_dev.port_numbers().context("error getting usb device ports")?;
+    let bus_num = usb_dev.bus_number();
+
+    //"/sys/bus/usb/devices/%d-%d.%d.../serial"
+    let mut dev_path = format!("/sys/bus/usb/devices/{}-{}", bus_num, ports[0]);
+    for p in &ports[1..] {
+        dev_path += &format!(".{}", p);
+    }
+    dev_path += "/serial";
+
+    eprintln!("[TADB] device serial path: {}", dev_path);
+
+    Ok(serial_number)
 }
 
 lazy_static! {
@@ -145,7 +157,7 @@ lazy_static! {
         match init_libusb_device_serial() {
             Ok(sn) => Some(sn),
             Err(e) => {
-                eprintln!("{}", e);
+                eprintln!("[TADB] {}", e);
                 None
             }
         }
