@@ -30,7 +30,7 @@ use redhook::{
     hook, real,
 };
 
-use nix::{unistd::{lseek, Whence}, sys::stat::fstat, fcntl::readlink};
+use nix::{unistd::{lseek, Whence}, sys::{stat::fstat, memfd::{memfd_create, MemFdCreateFlag}}, fcntl::readlink};
 use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
 use ctor::ctor;
@@ -105,7 +105,12 @@ lazy_static! {
         .map(|str| PathBuf::from(str)).ok();
 }
 
-fn init_libusb_device_serial() -> anyhow::Result<String> {
+struct UsbSerial {
+    number: String,
+    path: PathBuf,
+}
+
+fn init_libusb_device_serial() -> anyhow::Result<UsbSerial> {
     eprintln!("[TADB] calling libusb_set_option");
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
@@ -157,7 +162,7 @@ fn init_libusb_device_serial() -> anyhow::Result<String> {
 
     eprintln!("[TADB] device serial path: {}", dev_serial_path.display());
 
-    Ok(serial_number)
+    Ok(UsbSerial{ number: serial_number, path: dev_serial_path })
 }
 
 pub const fn major(dev: dev_t) -> u64 {
@@ -171,7 +176,7 @@ pub const fn minor(dev: dev_t) -> u64 {
 }
 
 lazy_static! {
-    static ref TERMUX_USB_SERIAL: Option<String> = {
+    static ref TERMUX_USB_SERIAL: Option<UsbSerial> = {
         match init_libusb_device_serial() {
             Ok(sn) => Some(sn),
             Err(e) => {
@@ -182,15 +187,17 @@ lazy_static! {
     };
 }
 
-fn get_usb_device_serial() -> &'static str {
-    TERMUX_USB_SERIAL.as_ref().map(|sn| sn.as_str()).unwrap_or("(no serial number)")
+fn get_usb_device_serial<'a>() -> Option<&'a UsbSerial> {
+    TERMUX_USB_SERIAL.as_ref()
 }
 
 #[ctor]
 fn libusb_device_serial_ctor() {
     // libusb_init hanged when called as lazy_static from opendir
     // so instead we use global constructor function which resolves the issue
-    eprintln!("[TADB] libusb device serial: {}", get_usb_device_serial());
+    if let Some(usb_sn) = get_usb_device_serial() {
+        eprintln!("[TADB] libusb device serial: {}", &usb_sn.number);
+    }
 }
 
 lazy_static! {
@@ -330,17 +337,34 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
             log!("[TADB] called open with pathname={} flags={}", name, flags);
         }
 
-        if let Some(usb_dev_path) = TERMUX_USB_DEV.as_ref() {
-            if &PathBuf::from(&name) == usb_dev_path {
-                if let Some(usb_fd) = TERMUX_USB_FD.clone() {
-                    if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
-                        log!("[TADB] error seeking fd {}: {}", usb_fd, e);
-                    }
-                    log!("[TADB] open hook returning fd with value {}", usb_fd);
-                    return usb_fd;
+        let name_path = PathBuf::from(&name);
+        if Some(&name_path) == TERMUX_USB_DEV.as_ref() {
+            if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+                if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
+                    log!("[TADB] error seeking fd {}: {}", usb_fd, e);
+                }
+                log!("[TADB] open hook returning fd with value {}", usb_fd);
+                return usb_fd;
+            }
+        }
+
+        let usb_serial = get_usb_device_serial();
+        if Some(&name_path) == usb_serial.map(|s| &s.path) {
+            if let Ok(serial_fd) = memfd_create(
+                CStr::from_ptr("usb-serial\0".as_ptr() as *const c_char),
+                MemFdCreateFlag::empty())
+            {
+                let wr_status = nix::unistd::write(
+                    serial_fd, usb_serial.unwrap().number.as_bytes());
+                let seek_status = lseek(serial_fd, 0, Whence::SeekSet);
+
+                match (wr_status, seek_status) {
+                    (Ok(_), Ok(_)) => return serial_fd,
+                    _ => ()
                 }
             }
         }
+
         name
     } else {
         "".to_owned()
