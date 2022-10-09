@@ -100,7 +100,7 @@ fn init_libusb_device() {
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
     eprintln!("[TADB] reading TERMUX_USB_FD");
-    if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+    if let Some(usb_fd) = Some(7) { // TODO: do this properly
         if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
             eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
         }
