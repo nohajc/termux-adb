@@ -13,7 +13,7 @@ use std::{
         unix::ffi::OsStrExt,
         raw::{c_char, c_int}
     },
-    sync::Mutex, collections::HashMap,
+    sync::{Mutex, atomic::{AtomicBool, Ordering}}, collections::HashMap,
     path::PathBuf, ptr::null_mut, time::Duration,
 };
 
@@ -191,6 +191,10 @@ fn get_usb_device_serial<'a>() -> Option<&'a UsbSerial> {
     TERMUX_USB_SERIAL.as_ref()
 }
 
+lazy_static! {
+    static ref LIBUSB_INITIALIZED: AtomicBool = AtomicBool::new(false);
+}
+
 #[ctor]
 fn libusb_device_serial_ctor() {
     // libusb_init hanged when called as lazy_static from opendir
@@ -198,6 +202,7 @@ fn libusb_device_serial_ctor() {
     if let Some(usb_sn) = get_usb_device_serial() {
         eprintln!("[TADB] libusb device serial: {}", &usb_sn.number);
     }
+    LIBUSB_INITIALIZED.store(true, Ordering::SeqCst);
 }
 
 lazy_static! {
@@ -348,19 +353,21 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
             }
         }
 
-        let usb_serial = get_usb_device_serial();
-        if Some(&name_path) == usb_serial.map(|s| &s.path) {
-            if let Ok(serial_fd) = memfd_create(
-                CStr::from_ptr("usb-serial\0".as_ptr() as *const c_char),
-                MemFdCreateFlag::empty())
-            {
-                let wr_status = nix::unistd::write(
-                    serial_fd, usb_serial.unwrap().number.as_bytes());
-                let seek_status = lseek(serial_fd, 0, Whence::SeekSet);
+        if LIBUSB_INITIALIZED.load(Ordering::SeqCst) {
+            let usb_serial = get_usb_device_serial();
+            if Some(&name_path) == usb_serial.map(|s| &s.path) {
+                if let Ok(serial_fd) = memfd_create(
+                    CStr::from_ptr("usb-serial\0".as_ptr() as *const c_char),
+                    MemFdCreateFlag::empty())
+                {
+                    let wr_status = nix::unistd::write(
+                        serial_fd, usb_serial.unwrap().number.as_bytes());
+                    let seek_status = lseek(serial_fd, 0, Whence::SeekSet);
 
-                match (wr_status, seek_status) {
-                    (Ok(_), Ok(_)) => return serial_fd,
-                    _ => ()
+                    match (wr_status, seek_status) {
+                        (Ok(_), Ok(_)) => return serial_fd,
+                        _ => ()
+                    }
                 }
             }
         }
