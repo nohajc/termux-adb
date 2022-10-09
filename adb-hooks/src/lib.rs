@@ -8,7 +8,7 @@ use std::{
     ffi::{CStr, OsStr},
     fs::File,
     io::Write,
-    mem,
+    mem::{self, MaybeUninit},
     os::{
         unix::ffi::OsStrExt,
         raw::{c_char, c_int}
@@ -99,8 +99,12 @@ lazy_static! {
         .map(|usb_fd_str| usb_fd_str.parse::<c_int>().ok()).ok().flatten();
 }
 
+static LIBUSB_CTX: MaybeUninit<rusb::Context> = MaybeUninit::uninit();
+
 #[ctor]
 fn init_libusb_device() {
+    let args: Vec<String> = env::args().collect();
+    eprintln!("[TADB] init_libusb_device called by {}", args.join(" "));
     eprintln!("[TADB] calling libusb_set_option");
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
@@ -109,6 +113,9 @@ fn init_libusb_device() {
         if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
             eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
         }
+
+        // libusb_init hanged when defined as lazy_static and called from opendir
+        // so instead we use global constructor function which resolves the issue
         match rusb::Context::new() {
             Ok(ctx) => {
                 eprintln!("[TADB] opening device from {}", usb_fd);
