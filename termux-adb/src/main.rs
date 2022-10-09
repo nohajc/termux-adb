@@ -1,11 +1,12 @@
 use std::{
     env,
     process::{Command, ExitCode, ExitStatus},
-    io, time::Duration, str,
+    io::{self, BufRead}, time::Duration, str,
     os::{unix::process::CommandExt, raw::c_int},
-    path::Path, thread,
+    path::{Path, PathBuf}, thread, fs::File,
 };
 use anyhow::{anyhow, Context};
+use daemonize::Daemonize;
 use nix::{unistd, sys::signal::{self, Signal}};
 use sysinfo::{SystemExt, RefreshKind, ProcessRefreshKind, ProcessExt, Pid};
 use which::which;
@@ -41,7 +42,29 @@ fn new_signal_receiver() -> anyhow::Result<Receiver<c_int>> {
     Ok(receiver)
 }
 
-fn wait_for(pid: Pid, signals: Receiver<c_int>) {
+fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
+    let log_file = File::open(&log_file_path).with_context(
+        || format!("could not open log file {} for reading", log_file_path.display())
+    )?;
+
+    let mut log_file_lines = io::BufReader::new(log_file).lines();
+
+    'outer: loop {
+        while let Some(msg) = log_file_lines.next().map(
+            |ln| ln.ok()
+        ).flatten() {
+            println!("{}", msg);
+            if msg == "* daemon started successfully" {
+                break 'outer;
+            }
+        }
+        thread::sleep(Duration::from_millis(250));
+    }
+
+    Ok(())
+}
+
+fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
     let pid = unistd::Pid::from_raw(i32::from(pid));
     let ticker = tick(Duration::from_secs(1));
 
@@ -104,6 +127,16 @@ fn run_adb_start_server(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_pat
         .status()
 }
 
+fn get_tmp_dir_path() -> PathBuf {
+    PathBuf::from(env::var("TMPDIR").unwrap_or("/tmp".to_owned()))
+}
+
+fn get_log_file_path(base_dir: &Path) -> PathBuf {
+    let mut result = base_dir.to_owned();
+    result.push(format!("termux-adb.{}.log", unistd::getuid()));
+    result
+}
+
 // TODO: termux-adb could continually keep track of usb devices and send valid
 // file descriptors to libadbhooks.so using some IPC mechanism like unix domain socket
 //
@@ -147,10 +180,29 @@ fn run() -> anyhow::Result<()> {
             // 5. attach signal handler which kills adb before termux-adb is terminated itself
             // 6. finds adb server PID and waits for it
             if let Some(p) = system.processes_by_exact_name("adb").next() {
-                wait_for(p.pid(), new_signal_receiver()?);
+                wait_for_adb_end(p.pid(), new_signal_receiver()?);
             };
         }
         _ => {
+            let tmpdir = get_tmp_dir_path();
+            let log_file_path = get_log_file_path(&tmpdir);
+            let log_file_stdout = File::create(&log_file_path).with_context(
+                || format!("could not create log file in {}", tmpdir.display())
+            )?;
+            let log_file_stderr = log_file_stdout.try_clone()?;
+
+            let daemonize = Daemonize::new()
+                .working_directory(&tmpdir)
+                .stdout(log_file_stdout)
+                .stderr(log_file_stderr)
+                .exit_action(|| {
+                    if let Err(e) = wait_for_adb_start(log_file_path) {
+                        eprintln!("{}", e);
+                    }
+                });
+
+            daemonize.start()?; // everything below runs in the background
+
             // 1. parses output of `termux-usb -l`
             let usb_dev_path = get_termux_usb_list()
                 .into_iter().next().context("error: no usb device found")?;
