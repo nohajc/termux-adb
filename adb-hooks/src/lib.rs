@@ -140,10 +140,9 @@ fn init_libusb_device_serial() -> anyhow::Result<String> {
     let ports = usb_dev.port_numbers().context("error getting usb device ports")?;
     let bus_num = usb_dev.bus_number();
 
-    //"/sys/bus/usb/devices/%d-%d.%d.../serial"
     let mut dev_path = format!("/sys/bus/usb/devices/{}-{}", bus_num, ports[0]);
-    for p in &ports[1..] {
-        dev_path += &format!(".{}", p);
+    for i in 1..ports.len() {
+        dev_path += &format!(".{}", ports[i]);
     }
     dev_path += "/serial";
 
