@@ -128,9 +128,14 @@ lazy_static! {
 
         eprintln!("[TADB] reading TERMUX_USB_FD");
         if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+            if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
+                eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
+            }
             eprintln!("[TADB] opening device from {}", usb_fd);
             if let Ok(usb_handle) = unsafe{ rusb::GlobalContext::default().open_device_with_fd(usb_fd) } {
+                eprintln!("[TADB] getting device from handle");
                 let usb_dev = usb_handle.device();
+                eprintln!("[TADB] requesting device descriptor");
                 if let Ok(usb_dev_desc) = usb_dev.device_descriptor() {
                     let vid = usb_dev_desc.vendor_id();
                     let pid = usb_dev_desc.product_id();
