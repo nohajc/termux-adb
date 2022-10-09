@@ -30,7 +30,7 @@ use redhook::{
     hook, real,
 };
 
-use nix::{unistd::{lseek, Whence}, sys::stat::fstat};
+use nix::{unistd::{lseek, Whence}, sys::stat::fstat, fcntl::readlink};
 use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
 use ctor::ctor;
@@ -137,19 +137,20 @@ fn init_libusb_device_serial() -> anyhow::Result<String> {
         languages[0], &usb_dev_desc, timeout
     ).context("error reading serial number of the device")?;
 
-    // let ports = usb_dev.port_numbers().context("error getting usb device ports")?;
-    // let bus_num = usb_dev.bus_number();
-
-    // let mut dev_path = format!("/sys/bus/usb/devices/{}-{}", bus_num, ports[0]);
-    // for i in 1..ports.len() {
-    //     dev_path += &format!(".{}", ports[i]);
-    // }
-    // dev_path += "/serial";
-
     let st = fstat(usb_fd).context("error: could not stat TERMUX_USB_FD")?;
-    // "/sys/dev/char/%d:%d"
     let dev_path_link = format!("/sys/dev/char/{}:{}", major(st.st_rdev), minor(st.st_rdev));
-    eprintln!("[TADB] device serial path link: {}", dev_path_link);
+
+    let dev_path = PathBuf::from(readlink(
+    &PathBuf::from(&dev_path_link))
+        .context(format!("error: could not resolve symlink {}", &dev_path_link)
+    )?);
+
+    let mut dev_serial_path = PathBuf::from("/sys/bus/usb/devices");
+
+    dev_serial_path.push(dev_path.file_name().context("error: could not get device path")?);
+    dev_serial_path.push("serial");
+
+    eprintln!("[TADB] device serial path: {}", dev_serial_path.display());
 
     Ok(serial_number)
 }
