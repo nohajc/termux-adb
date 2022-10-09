@@ -30,6 +30,7 @@ use redhook::{
 };
 
 use nix::unistd::{lseek, Whence};
+use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
 lazy_static! {
     static ref LOG: Mutex<File> = Mutex::new(File::create("./tadb-log.txt").unwrap());
@@ -92,6 +93,11 @@ fn dirent_new(off: off_t, typ: c_uchar, name: &OsStr) -> dirent {
 }
 
 lazy_static! {
+    static ref TERMUX_USB_FD: Option<c_int> = env::var("TERMUX_USB_FD")
+        .map(|usb_fd_str| usb_fd_str.parse::<c_int>().ok()).ok().flatten();
+}
+
+lazy_static! {
     static ref DIR_MAP: HashMap<PathBuf, DirStream> = {
         let mut dir_map = HashMap::new();
         if let Ok(usb_dev_path) = env::var("TERMUX_USB_DEV").map(|str| PathBuf::from(str)) {
@@ -116,6 +122,21 @@ lazy_static! {
                 }
             }
         }
+
+        unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
+
+        if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+            if let Ok(usb_handle) = unsafe{ rusb::GlobalContext::default().open_device_with_fd(usb_fd) } {
+                let usb_dev = usb_handle.device();
+                if let Ok(usb_dev_desc) = usb_dev.device_descriptor() {
+                    let vid = usb_dev_desc.vendor_id();
+                    let pid = usb_dev_desc.product_id();
+                    let iser = usb_dev_desc.serial_number_string_index();
+                    log!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
+                }
+            }
+        }
+
         dir_map
     };
 }
@@ -203,12 +224,10 @@ hook! {
 
 hook! {
     unsafe fn close(fd: c_int) -> c_int => tadb_close {
-        if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
-            if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
-                // usb fd must not be closed
-                if usb_fd == fd {
-                    return 0;
-                }
+        if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+            // usb fd must not be closed
+            if usb_fd == fd {
+                return 0;
             }
         }
         real!(close)(fd)
@@ -230,14 +249,12 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
         }
 
         if name.starts_with(BASE_DIR_ORIG) { // assuming there is always only one usb device
-            if let Ok(usb_fd_str) = env::var("TERMUX_USB_FD") {
-                if let Ok(usb_fd) = usb_fd_str.parse::<c_int>() {
-                    if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
-                        log!("[TADB] error seeking fd {}: {}", usb_fd, e);
-                    }
-                    log!("[TADB] open hook returning fd with value {}", usb_fd);
-                    return usb_fd;
+            if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+                if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
+                    log!("[TADB] error seeking fd {}: {}", usb_fd, e);
                 }
+                log!("[TADB] open hook returning fd with value {}", usb_fd);
+                return usb_fd;
             }
         }
         name
