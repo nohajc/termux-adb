@@ -110,8 +110,6 @@ lazy_static! {
                 eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
             }
 
-            // libusb_init hanged when defined as lazy_static and called from opendir
-            // so instead we use global constructor function which resolves the issue
             match rusb::Context::new() {
                 Ok(ctx) => {
                     eprintln!("[TADB] opening device from {}", usb_fd);
@@ -127,11 +125,14 @@ lazy_static! {
                                 eprintln!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
 
                                 let timeout = Duration::from_secs(1);
-                                if let Ok(languages) = usb_handle.read_languages(timeout) {
-                                    match usb_handle.read_serial_number_string(languages[0], &usb_dev_desc, timeout) {
-                                        Ok(sn) => return Some(sn),
-                                        Err(_) => eprintln!("[TADB] error reading serial number of the device"),
+                                match usb_handle.read_languages(timeout) {
+                                    Ok(languages) => {
+                                        match usb_handle.read_serial_number_string(languages[0], &usb_dev_desc, timeout) {
+                                            Ok(sn) => return Some(sn),
+                                            Err(e) => eprintln!("[TADB] error reading serial number of the device: {}", e),
+                                        }
                                     }
+                                    Err(e) => eprintln!("[TADB] error getting supported languages for reading string descriptors: {}", e)
                                 }
                             }
                         }
@@ -154,6 +155,8 @@ fn get_usb_device_serial() -> &'static str {
 
 #[ctor]
 fn init_libusb_device_serial() {
+    // libusb_init hanged when called as lazy_static from opendir
+    // so instead we use global constructor function which resolves the issue
     eprintln!("[TADB] libusb device serial: {}", get_usb_device_serial());
 }
 
