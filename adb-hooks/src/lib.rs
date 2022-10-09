@@ -123,9 +123,12 @@ lazy_static! {
             }
         }
 
+        eprintln!("[TADB] calling libusb_set_option");
         unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
+        eprintln!("[TADB] reading TERMUX_USB_FD");
         if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+            eprintln!("[TADB] opening device from {}", usb_fd);
             if let Ok(usb_handle) = unsafe{ rusb::GlobalContext::default().open_device_with_fd(usb_fd) } {
                 let usb_dev = usb_handle.device();
                 if let Ok(usb_dev_desc) = usb_dev.device_descriptor() {
