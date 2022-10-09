@@ -94,13 +94,18 @@ fn dirent_new(off: off_t, typ: c_uchar, name: &OsStr) -> dirent {
     entry
 }
 
+lazy_static! {
+    static ref TERMUX_USB_FD: Option<c_int> = env::var("TERMUX_USB_FD")
+        .map(|usb_fd_str| usb_fd_str.parse::<c_int>().ok()).ok().flatten();
+}
+
 #[ctor]
 fn init_libusb_device() {
     eprintln!("[TADB] calling libusb_set_option");
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
     eprintln!("[TADB] reading TERMUX_USB_FD");
-    if let Some(usb_fd) = Some(7) { // TODO: do this properly
+    if let Some(usb_fd) = TERMUX_USB_FD.clone() {
         if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
             eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
         }
@@ -127,11 +132,6 @@ fn init_libusb_device() {
             }
         }
     }
-}
-
-lazy_static! {
-    static ref TERMUX_USB_FD: Option<c_int> = env::var("TERMUX_USB_FD")
-        .map(|usb_fd_str| usb_fd_str.parse::<c_int>().ok()).ok().flatten();
 }
 
 lazy_static! {
