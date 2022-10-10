@@ -36,16 +36,20 @@ use nix::{
     fcntl::readlink
 };
 
+// TODO: maybe try to link against libusb properly
 use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
 use ctor::ctor;
 
+// TODO: try once_cell::sync::Lazy instead of lazy_static
 lazy_static! {
     static ref LOG: Mutex<File> = Mutex::new(File::create("./tadb-log.txt").unwrap());
 }
 
 const BASE_DIR_ORIG: &str = "/dev/bus/usb";
 
+// TODO: remove custom logging and print to stdout/stderr
+// which is already redirected to $TMPDIR/adb.$UID.log
 macro_rules! log {
     ($($arg:tt)*) => {
         _ = writeln!(&mut *LOG.lock().unwrap(), $($arg)*);
@@ -204,6 +208,8 @@ lazy_static! {
 fn libusb_device_serial_ctor() {
     // libusb_init hanged when called as lazy_static from opendir
     // so instead we use global constructor function which resolves the issue
+    // TODO: is there any way to prevent this from running
+    // unless we're in the forked adb server process?
     if let Some(usb_sn) = get_usb_device_serial() {
         eprintln!("[TADB] libusb device serial: {}", &usb_sn.number);
     }
