@@ -20,8 +20,8 @@ use std::{
 use anyhow::Context;
 use libc::{
     DIR, dirent, O_CREAT, mode_t,
-    DT_CHR, DT_DIR, off_t,
-    c_ushort, c_uchar, dev_t
+    DT_CHR, DT_DIR,
+    c_ushort, c_uchar, c_uint
 };
 
 use rand::Rng;
@@ -86,7 +86,7 @@ impl NameSetter for dirent {
     }
 }
 
-fn dirent_new(off: off_t, typ: c_uchar, name: &OsStr) -> dirent {
+fn dirent_new(off: i64, typ: c_uchar, name: &OsStr) -> dirent {
     let mut rng = rand::thread_rng();
     let mut entry = dirent {
         d_ino: rng.gen(),
@@ -170,12 +170,12 @@ fn init_libusb_device_serial() -> anyhow::Result<UsbSerial> {
     Ok(UsbSerial{ number: serial_number, path: dev_serial_path })
 }
 
-pub const fn major(dev: dev_t) -> u64 {
+pub const fn major(dev: u64) -> u64 {
     ((dev >> 32) & 0xffff_f000) |
     ((dev >>  8) & 0x0000_0fff)
 }
 
-pub const fn minor(dev: dev_t) -> u64 {
+pub const fn minor(dev: u64) -> u64 {
     ((dev >> 12) & 0xffff_ff00) |
     ((dev      ) & 0x0000_00ff)
 }
@@ -388,7 +388,7 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
     let result = if (flags & O_CREAT) == 0 {
         REAL_OPEN(pathname, flags)
     } else {
-        REAL_OPEN(pathname, flags, args.arg::<mode_t>())
+        REAL_OPEN(pathname, flags, args.arg::<mode_t>() as c_uint)
     };
 
     // prevent infinite recursion when logfile is first initialized
