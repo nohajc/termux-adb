@@ -49,16 +49,25 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
 
     let mut log_file_lines = io::BufReader::new(log_file).lines();
 
-    // TODO: first wait for "using /dev/bus/usb.*" with a much longer timeout
-    // TODO: filter lines starting with [TADB]
-    for _ in 0..20 { // wait 5 secs for adb to start
+    let mut i = 0;
+    let mut waiting_for_device = true;
+    while i < 20 { // after the device is approved, wait 5 secs for adb to start
         while let Some(msg) = log_file_lines.next().map(
             |ln| ln.ok()
         ).flatten() {
+            if msg.starts_with("[TADB]") {
+                continue;
+            }
             println!("{}", msg);
             if msg == "* daemon started successfully" {
                 return Ok(());
             }
+            if msg.starts_with("using /dev/bus/usb") {
+                waiting_for_device = false;
+            }
+        }
+        if !waiting_for_device {
+            i += 1;
         }
         thread::sleep(Duration::from_millis(250));
     }
@@ -162,7 +171,7 @@ fn run() -> anyhow::Result<()> {
 
     match (env::var("TERMUX_USB_DEV"), env::var("TERMUX_USB_FD")) {
         (Ok(termux_usb_dev), Ok(termux_usb_fd)) => {
-            println!("{}: fd = {}", &termux_usb_dev, termux_usb_fd);
+            println!("using {}: fd = {}", &termux_usb_dev, termux_usb_fd);
 
             // 4. executes `adb kill-server && LD_PRELOAD=libadbhooks.so adb start-server`
             // (with TERMUX_USB_DEV and TERMUX_USB_FD env vars)
@@ -208,7 +217,7 @@ fn run() -> anyhow::Result<()> {
             // 1. parses output of `termux-usb -l`
             let usb_dev_path = get_termux_usb_list()
                 .into_iter().next().context("error: no usb device found")?;
-            println!("using {}", &usb_dev_path);
+            println!("requesting {}", &usb_dev_path);
 
             daemonize.start()?; // everything below runs in the background
 
