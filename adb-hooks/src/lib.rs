@@ -1,8 +1,5 @@
 #![feature(c_variadic)]
 
-#[macro_use]
-extern crate lazy_static;
-
 use std::{
     env,
     ffi::{CStr, OsStr},
@@ -24,6 +21,8 @@ use libc::{
     c_ushort, c_uchar, c_uint
 };
 
+use once_cell::sync::Lazy;
+
 use rand::Rng;
 
 use redhook::{
@@ -41,10 +40,7 @@ use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
 use ctor::ctor;
 
-// TODO: try once_cell::sync::Lazy instead of lazy_static
-lazy_static! {
-    static ref LOG: Mutex<File> = Mutex::new(File::create("./tadb-log.txt").unwrap());
-}
+static LOG: Lazy<Mutex<File>> = Lazy::new(|| Mutex::new(File::create("./tadb-log.txt").unwrap()));
 
 const BASE_DIR_ORIG: &str = "/dev/bus/usb";
 
@@ -104,15 +100,15 @@ fn dirent_new(off: i64, typ: c_uchar, name: &OsStr) -> dirent {
     entry
 }
 
-lazy_static! {
-    static ref TERMUX_USB_FD: Option<c_int> = env::var("TERMUX_USB_FD")
-        .map(|usb_fd_str| usb_fd_str.parse::<c_int>().ok()).ok().flatten();
-}
+static TERMUX_USB_FD: Lazy<Option<c_int>> = Lazy::new(|| {
+    env::var("TERMUX_USB_FD").map(|usb_fd_str| {
+        usb_fd_str.parse::<c_int>().ok()
+    }).ok().flatten()
+});
 
-lazy_static! {
-    static ref TERMUX_USB_DEV: Option<PathBuf> = env::var("TERMUX_USB_DEV")
-        .map(|str| PathBuf::from(str)).ok();
-}
+static TERMUX_USB_DEV: Lazy<Option<PathBuf>> = Lazy::new(|| {
+    env::var("TERMUX_USB_DEV").map(|str| PathBuf::from(str)).ok()
+});
 
 struct UsbSerial {
     number: String,
@@ -184,29 +180,25 @@ pub const fn minor(dev: u64) -> u64 {
     ((dev      ) & 0x0000_00ff)
 }
 
-lazy_static! {
-    static ref TERMUX_USB_SERIAL: Option<UsbSerial> = {
-        match init_libusb_device_serial() {
-            Ok(sn) => Some(sn),
-            Err(e) => {
-                eprintln!("[TADB] {}", e);
-                None
-            }
+static TERMUX_USB_SERIAL: Lazy<Option<UsbSerial>> = Lazy::new(|| {
+    match init_libusb_device_serial() {
+        Ok(sn) => Some(sn),
+        Err(e) => {
+            eprintln!("[TADB] {}", e);
+            None
         }
-    };
-}
+    }
+});
 
 fn get_usb_device_serial<'a>() -> Option<&'a UsbSerial> {
     TERMUX_USB_SERIAL.as_ref()
 }
 
-lazy_static! {
-    static ref LIBUSB_INITIALIZED: AtomicBool = AtomicBool::new(false);
-}
+static LIBUSB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[ctor]
 fn libusb_device_serial_ctor() {
-    // libusb_init hanged when called as lazy_static from opendir
+    // libusb_init hanged when called as Lazy static from opendir
     // so instead we use global constructor function which resolves the issue
     // TODO: is there any way to prevent this from running
     // unless we're in the forked adb server process?
@@ -216,35 +208,33 @@ fn libusb_device_serial_ctor() {
     LIBUSB_INITIALIZED.store(true, Ordering::SeqCst);
 }
 
-lazy_static! {
-    static ref DIR_MAP: HashMap<PathBuf, DirStream> = {
-        let mut dir_map = HashMap::new();
-        if let Some(usb_dev_path) = TERMUX_USB_DEV.as_ref() {
-            if let Some(usb_dev_name) = usb_dev_path.file_name() {
-                let mut last_entry = dirent_new(
-                    0, DT_CHR, usb_dev_name
+static DIR_MAP: Lazy<HashMap<PathBuf, DirStream>> = Lazy::new(|| {
+    let mut dir_map = HashMap::new();
+    if let Some(ref usb_dev_path) = *TERMUX_USB_DEV {
+        if let Some(usb_dev_name) = usb_dev_path.file_name() {
+            let mut last_entry = dirent_new(
+                0, DT_CHR, usb_dev_name
+            );
+            let mut current_dir = usb_dev_path.clone();
+
+            while current_dir.pop() {
+                dir_map.insert(current_dir.clone(), DirStream{
+                    pos: 0,
+                    entry: last_entry.clone(),
+                });
+                last_entry = dirent_new(
+                    0, DT_DIR, current_dir.file_name().unwrap()
                 );
-                let mut current_dir = usb_dev_path.clone();
 
-                while current_dir.pop() {
-                    dir_map.insert(current_dir.clone(), DirStream{
-                        pos: 0,
-                        entry: last_entry.clone(),
-                    });
-                    last_entry = dirent_new(
-                        0, DT_DIR, current_dir.file_name().unwrap()
-                    );
-
-                    if current_dir.as_os_str() == BASE_DIR_ORIG {
-                        break;
-                    }
+                if current_dir.as_os_str() == BASE_DIR_ORIG {
+                    break;
                 }
             }
         }
+    }
 
-        dir_map
-    };
-}
+    dir_map
+});
 
 enum HookedDir {
     Native(*mut DIR),
@@ -329,7 +319,7 @@ hook! {
 
 hook! {
     unsafe fn close(fd: c_int) -> c_int => tadb_close {
-        if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+        if let Some(usb_fd) = *TERMUX_USB_FD {
             // usb fd must not be closed
             if usb_fd == fd {
                 return 0;
@@ -340,9 +330,9 @@ hook! {
 }
 
 type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
-lazy_static! {
-    static ref REAL_OPEN: OpenFn = unsafe{ mem::transmute(redhook::ld_preload::dlsym_next("open\0")) };
-}
+static REAL_OPEN: Lazy<OpenFn> = Lazy::new(|| unsafe{
+    mem::transmute(redhook::ld_preload::dlsym_next("open\0"))
+});
 
 #[no_mangle]
 pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
@@ -355,7 +345,7 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
 
         let name_path = PathBuf::from(&name);
         if Some(&name_path) == TERMUX_USB_DEV.as_ref() {
-            if let Some(usb_fd) = TERMUX_USB_FD.clone() {
+            if let Some(usb_fd) = *TERMUX_USB_FD {
                 if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
                     log!("[TADB] error seeking fd {}: {}", usb_fd, e);
                 }
