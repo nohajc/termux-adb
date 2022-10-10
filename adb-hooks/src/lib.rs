@@ -30,7 +30,12 @@ use redhook::{
     hook, real,
 };
 
-use nix::{unistd::{lseek, Whence}, sys::{stat::fstat, memfd::{memfd_create, MemFdCreateFlag}}, fcntl::readlink};
+use nix::{
+    unistd::{lseek, Whence},
+    sys::{stat::fstat, memfd::{memfd_create, MemFdCreateFlag}},
+    fcntl::readlink
+};
+
 use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
 use ctor::ctor;
