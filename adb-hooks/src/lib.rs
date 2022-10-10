@@ -266,6 +266,9 @@ hook! {
 
         log!("[TADB] called opendir with {}", &name_str);
         let dir = real!(opendir)(name);
+        if dir.is_null() {
+            return null_mut();
+        }
         HookedDir::Native(dir).into()
     }
 }
