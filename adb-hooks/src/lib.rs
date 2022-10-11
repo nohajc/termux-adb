@@ -36,6 +36,8 @@ use nix::{
 // TODO: maybe try to link against libusb properly
 use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
+use log::{debug, info, error};
+
 use ctor::ctor;
 
 const BASE_DIR_ORIG: &str = "/dev/bus/usb";
@@ -104,10 +106,10 @@ struct UsbSerial {
 }
 
 fn init_libusb_device_serial() -> anyhow::Result<UsbSerial> {
-    println!("[TADB] calling libusb_set_option");
+    debug!("calling libusb_set_option");
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
-    println!("[TADB] reading TERMUX_USB_FD");
+    debug!("reading TERMUX_USB_FD");
     let usb_fd = TERMUX_USB_FD.context("error: missing TERMUX_USB_FD")?;
 
     lseek(usb_fd, 0, Whence::SeekSet)
@@ -115,22 +117,22 @@ fn init_libusb_device_serial() -> anyhow::Result<UsbSerial> {
 
     let ctx = rusb::Context::new().context("libusb_init error")?;
 
-    println!("[TADB] opening device from {}", usb_fd);
+    debug!("opening device from {}", usb_fd);
     let usb_handle = unsafe{
         ctx.open_device_with_fd(usb_fd).context("error opening device")
     }?;
 
-    println!("[TADB] getting device from handle");
+    debug!("getting device from handle");
     let usb_dev = usb_handle.device();
 
-    println!("[TADB] requesting device descriptor");
+    debug!("requesting device descriptor");
     let usb_dev_desc = usb_dev.device_descriptor()
         .context("error getting device descriptor")?;
 
     let vid = usb_dev_desc.vendor_id();
     let pid = usb_dev_desc.product_id();
     let iser = usb_dev_desc.serial_number_string_index();
-    println!("[TADB] device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
+    debug!("device descriptor: vid={}, pid={}, iSerial={}", vid, pid, iser.unwrap_or(0));
 
     let timeout = Duration::from_secs(1);
     let languages = usb_handle.read_languages(timeout)
@@ -153,7 +155,7 @@ fn init_libusb_device_serial() -> anyhow::Result<UsbSerial> {
     dev_serial_path.push(dev_path.file_name().context("error: could not get device path")?);
     dev_serial_path.push("serial");
 
-    println!("[TADB] device serial path: {}", dev_serial_path.display());
+    info!("device serial path: {}", dev_serial_path.display());
 
     Ok(UsbSerial{ number: serial_number, path: dev_serial_path })
 }
@@ -172,7 +174,7 @@ static TERMUX_USB_SERIAL: Lazy<Option<UsbSerial>> = Lazy::new(|| {
     match init_libusb_device_serial() {
         Ok(sn) => Some(sn),
         Err(e) => {
-            eprintln!("[TADB] {}", e);
+            error!("{}", e);
             None
         }
     }
@@ -186,12 +188,13 @@ static LIBUSB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
 #[ctor]
 fn libusb_device_serial_ctor() {
+    env_logger::init();
     // libusb_init hanged when called as Lazy static from opendir
     // so instead we use global constructor function which resolves the issue
     // TODO: is there any way to prevent this from running
     // unless we're in the forked adb server process?
     if let Some(usb_sn) = get_usb_device_serial() {
-        println!("[TADB] libusb device serial: {}", &usb_sn.number);
+        info!("libusb device serial: {}", &usb_sn.number);
     }
     LIBUSB_INITIALIZED.store(true, Ordering::SeqCst);
 }
@@ -247,12 +250,12 @@ hook! {
         if name_str.starts_with(BASE_DIR_ORIG) {
             let name_osstr = to_os_str(name_cstr);
             if let Some(dirstream) = DIR_MAP.get(&PathBuf::from(name_osstr)) {
-                println!("[TADB] called opendir with {}, remapping to virtual DirStream", &name_str);
+                debug!("called opendir with {}, remapping to virtual DirStream", &name_str);
                 return HookedDir::Virtual(dirstream.to_owned()).into();
             }
         }
 
-        println!("[TADB] called opendir with {}", &name_str);
+        debug!("called opendir with {}", &name_str);
         let dir = real!(opendir)(name);
         if dir.is_null() {
             return null_mut();
@@ -286,19 +289,19 @@ hook! {
         let hooked_dir = &mut *(dirp as *mut HookedDir);
         match hooked_dir {
             &mut HookedDir::Native(dirp) => {
-                println!("[TADB] called readdir with native DIR* {:?}", dirp);
+                debug!("called readdir with native DIR* {:?}", dirp);
                 let result = real!(readdir)(dirp);
                 if let Some(r) = result.as_ref() {
-                    println!("[TADB] readdir returned dirent with d_name={}", to_string(to_cstr(&r.d_name)));
+                    debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&r.d_name)));
                 }
                 result
             }
             &mut HookedDir::Virtual(DirStream{ref mut pos, ref mut entry}) => {
-                println!("[TADB] called readdir with virtual DirStream");
+                debug!("called readdir with virtual DirStream");
                 match pos {
                     0 => {
                         *pos += 1;
-                        println!("[TADB] readdir returned dirent with d_name={}", to_string(to_cstr(&entry.d_name)));
+                        debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&entry.d_name)));
                         entry as *mut dirent
                     }
                     _ => null_mut()
@@ -331,15 +334,15 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
         let name = to_string(CStr::from_ptr(pathname));
         // prevent infinite recursion when logfile is first initialized
 
-        println!("[TADB] called open with pathname={} flags={}", name, flags);
+        debug!("called open with pathname={} flags={}", name, flags);
 
         let name_path = PathBuf::from(&name);
         if Some(&name_path) == TERMUX_USB_DEV.as_ref() {
             if let Some(usb_fd) = *TERMUX_USB_FD {
                 if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
-                    eprintln!("[TADB] error seeking fd {}: {}", usb_fd, e);
+                    error!("error seeking fd {}: {}", usb_fd, e);
                 }
-                println!("[TADB] open hook returning fd with value {}", usb_fd);
+                info!("open hook returning fd with value {}", usb_fd);
                 return usb_fd;
             }
         }
@@ -357,7 +360,7 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
 
                     match (wr_status, seek_status) {
                         (Ok(_), Ok(_)) => {
-                            println!("[TADB] open hook returning fd with value {}", serial_fd);
+                            info!("open hook returning fd with value {}", serial_fd);
                             return serial_fd
                         }
                         _ => ()
@@ -373,7 +376,7 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
         REAL_OPEN(pathname, flags, args.arg::<mode_t>() as c_uint)
     };
 
-    println!("[TADB] open returned fd with value {}", result);
+    debug!("open returned fd with value {}", result);
 
     result
 }

@@ -18,3 +18,5 @@ once_cell = "1.15.0"
 rand = "0.8.5"
 redhook = { git = "https://github.com/nohajc/redhook.git", branch = "enable-android-target" }
 rusb = { version = "0.9.1", git = "https://github.com/nohajc/rusb.git", features = ["nolink"] }
+log = "0.4.0"
+env_logger = "0.9.0"

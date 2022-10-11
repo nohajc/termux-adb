@@ -55,7 +55,7 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
         while let Some(msg) = log_file_lines.next().map(
             |ln| ln.ok()
         ).flatten() {
-            if msg.starts_with("[TADB]") {
+            if msg.contains("adbhooks]") {
                 continue;
             }
             println!("{}", msg);
