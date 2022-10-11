@@ -171,12 +171,17 @@ pub const fn minor(dev: u64) -> u64 {
 }
 
 static TERMUX_USB_SERIAL: Lazy<Option<UsbSerial>> = Lazy::new(|| {
-    match init_libusb_device_serial() {
-        Ok(sn) => Some(sn),
-        Err(e) => {
-            error!("{}", e);
-            None
+    if let Ok(_) = env::var("TERMUX_ADB_SERVER_RUNNING") {
+        match init_libusb_device_serial() {
+            Ok(sn) => Some(sn),
+            Err(e) => {
+                error!("{}", e);
+                None
+            }
         }
+    } else {
+        env::set_var("TERMUX_ADB_SERVER_RUNNING", "true");
+        None
     }
 });
 
@@ -191,8 +196,6 @@ fn libusb_device_serial_ctor() {
     env_logger::init();
     // libusb_init hanged when called as Lazy static from opendir
     // so instead we use global constructor function which resolves the issue
-    // TODO: is there any way to prevent this from running
-    // unless we're in the forked adb server process?
     if let Some(usb_sn) = get_usb_device_serial() {
         info!("libusb device serial: {}", &usb_sn.number);
     }
