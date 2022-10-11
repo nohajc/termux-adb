@@ -155,7 +155,7 @@ fn get_log_file_path(base_dir: &Path) -> PathBuf {
 //
 // for that to work though, it has to keep execing itself through termux-usb
 // but not restart adb server each time; that means we want to check if libadbhooks.so
-// is already injected and that can be deremined by reading from procfs memory map
+// is already injected and that can be determined by reading from procfs memory map
 // (https://docs.rs/procfs/latest/procfs/process/struct.Process.html#method.maps)
 fn run() -> anyhow::Result<()> {
     check_dependencies()?;
