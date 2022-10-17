@@ -150,6 +150,35 @@ fn get_log_file_path(base_dir: &Path) -> PathBuf {
     result
 }
 
+fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -> anyhow::Result<()> {
+    println!("using {}: fd = {}", &termux_usb_dev, termux_usb_fd);
+
+    // 4. executes `adb kill-server && LD_PRELOAD=libadbhooks.so adb start-server`
+    // (with TERMUX_USB_DEV and TERMUX_USB_FD env vars)
+    let kill_status = run_adb_kill_server()?;
+    if !kill_status.success() {
+        return Err(anyhow!("adb kill-server exited with error status"));
+    }
+
+    let start_status = run_adb_start_server(&termux_usb_dev, &termux_usb_fd, &adb_hooks_path)?;
+    if !start_status.success() {
+        return Err(anyhow!("adb start-server exited with error status"));
+    }
+
+    let system = sysinfo::System::new_with_specifics(
+        RefreshKind::new()
+            .with_processes(ProcessRefreshKind::new())
+    );
+
+    // 5. attach signal handler which kills adb before termux-adb is terminated itself
+    // 6. finds adb server PID and waits for it
+    if let Some(p) = system.processes_by_exact_name("adb").next() {
+        wait_for_adb_end(p.pid(), new_signal_receiver()?);
+    };
+
+    Ok(())
+}
+
 // TODO: termux-adb could continually keep track of usb devices and send valid
 // file descriptors to libadbhooks.so using some IPC mechanism like unix domain socket
 //
@@ -171,30 +200,7 @@ fn run() -> anyhow::Result<()> {
 
     match (env::var("TERMUX_USB_DEV"), env::var("TERMUX_USB_FD")) {
         (Ok(termux_usb_dev), Ok(termux_usb_fd)) => {
-            println!("using {}: fd = {}", &termux_usb_dev, termux_usb_fd);
-
-            // 4. executes `adb kill-server && LD_PRELOAD=libadbhooks.so adb start-server`
-            // (with TERMUX_USB_DEV and TERMUX_USB_FD env vars)
-            let kill_status = run_adb_kill_server()?;
-            if !kill_status.success() {
-                return Err(anyhow!("adb kill-server exited with error status"));
-            }
-
-            let start_status = run_adb_start_server(&termux_usb_dev, &termux_usb_fd, &adb_hooks_path)?;
-            if !start_status.success() {
-                return Err(anyhow!("adb start-server exited with error status"));
-            }
-
-            let system = sysinfo::System::new_with_specifics(
-                RefreshKind::new()
-                    .with_processes(ProcessRefreshKind::new())
-            );
-
-            // 5. attach signal handler which kills adb before termux-adb is terminated itself
-            // 6. finds adb server PID and waits for it
-            if let Some(p) = system.processes_by_exact_name("adb").next() {
-                wait_for_adb_end(p.pid(), new_signal_receiver()?);
-            };
+            phase_two(&termux_usb_dev, &termux_usb_fd, &adb_hooks_path)?;
         }
         _ => {
             let tmpdir = get_tmp_dir_path();
@@ -215,15 +221,19 @@ fn run() -> anyhow::Result<()> {
                 });
 
             // 1. parses output of `termux-usb -l`
-            let usb_dev_path = get_termux_usb_list()
-                .into_iter().next().context("error: no usb device found")?;
-            println!("requesting {}", &usb_dev_path);
+            let usb_dev_path = get_termux_usb_list().into_iter()
+                .next().map(|p| { println!("requesting {}", &p); p });
 
             daemonize.start()?; // everything below runs in the background
 
-            // 2. sets environment variable TERMUX_USB_DEV={usb_dev_path}
-            // 3. executes termux-usb -e termux-adb -E -r {usb_dev_path}
-            run_under_termux_usb(&usb_dev_path, &termux_adb_path);
+            if let Some(usb_dev_path) = usb_dev_path {
+                // 2. sets environment variable TERMUX_USB_DEV={usb_dev_path}
+                // 3. executes termux-usb -e termux-adb -E -r {usb_dev_path}
+                run_under_termux_usb(&usb_dev_path, &termux_adb_path);
+            } else {
+                // if no usb device found yet, start adb server directly
+                phase_two("none", "-1", &adb_hooks_path)?;
+            }
         }
     }
 
