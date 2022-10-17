@@ -93,11 +93,18 @@ fn dirent_new(off: i64, typ: c_uchar, name: &OsStr) -> dirent {
 static TERMUX_USB_FD: Lazy<Option<c_int>> = Lazy::new(|| {
     env::var("TERMUX_USB_FD").map(|usb_fd_str| {
         usb_fd_str.parse::<c_int>().ok()
-    }).ok().flatten()
+    }).ok().flatten().and_then(|fd| match fd {
+        -1 => None,
+        i => Some(i)
+    })
 });
 
 static TERMUX_USB_DEV: Lazy<Option<PathBuf>> = Lazy::new(|| {
-    env::var("TERMUX_USB_DEV").map(|str| PathBuf::from(str)).ok()
+    env::var("TERMUX_USB_DEV").ok()
+        .and_then(|dev| match dev.as_str() {
+            "none" => None,
+            _ => Some(dev)
+        }).map(|str| PathBuf::from(str))
 });
 
 struct UsbSerial {

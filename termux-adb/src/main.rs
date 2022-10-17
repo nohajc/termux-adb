@@ -62,7 +62,7 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
             if msg == "* daemon started successfully" {
                 return Ok(());
             }
-            if msg.starts_with("using /dev/bus/usb") {
+            if msg.starts_with("using /dev/bus/usb") || msg == "no device connected yet" {
                 waiting_for_device = false;
             }
         }
@@ -231,6 +231,7 @@ fn run() -> anyhow::Result<()> {
                 // 3. executes termux-usb -e termux-adb -E -r {usb_dev_path}
                 run_under_termux_usb(&usb_dev_path, &termux_adb_path);
             } else {
+                println!("no device connected yet");
                 // if no usb device found yet, start adb server directly
                 phase_two("none", "-1", &adb_hooks_path)?;
             }
