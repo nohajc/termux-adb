@@ -5,7 +5,7 @@ use std::{
     os::{
         unix::{
             net::UnixDatagram,
-            process::CommandExt,
+            process::CommandExt, prelude::{AsRawFd, RawFd},
         },
         raw::c_int
     },
@@ -13,7 +13,11 @@ use std::{
 };
 use anyhow::{anyhow, Context};
 use daemonize::Daemonize;
-use nix::{unistd, sys::signal::{self, Signal}};
+use nix::{
+    unistd,
+    sys::signal::{self, Signal},
+    libc::{fcntl, F_GETFD, F_SETFD, FD_CLOEXEC},
+};
 use sysinfo::{SystemExt, RefreshKind, ProcessRefreshKind, ProcessExt, Pid};
 use which::which;
 
@@ -83,29 +87,12 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
     Err(anyhow!("error: adb server didn't start, check the log: {}", adb_log))
 }
 
-fn scan_for_usb_devices() -> anyhow::Result<()> {
-    let sock_path = "/data/data/com.termux/files/usr/tmp/termux-adb.sock";
-    let socket = UnixDatagram::unbound().context("failed to create UDS")?;
-    let mut socket_connected = false;
-
+fn scan_for_usb_devices(socket: UnixDatagram) -> anyhow::Result<()> {
     loop {
-        if !socket_connected {
-            match socket.connect(sock_path) {
-                Ok(()) => {
-                    socket_connected = true;
-                    println!("socket connected");
-                }
-                Err(e) => {
-                    eprintln!("socket connect error: {}", e);
-                }
-            }
-        }
-        if socket_connected {
-            println!("| sending message to socket");
-            match socket.send(b"hello from termux-adb monitor") {
-                Ok(size) => println!("> message sent to socket: size={}", size),
-                Err(e) => eprintln!("socket send error: {}", e)
-            }
+        println!("| sending message to socket");
+        match socket.send(b"hello from termux-adb monitor") {
+            Ok(size) => println!("> message sent to socket: size={}", size),
+            Err(e) => eprintln!("socket send error: {}", e)
         }
         thread::sleep(Duration::from_millis(2500));
     }
@@ -165,10 +152,11 @@ fn run_adb_kill_server() -> io::Result<ExitStatus> {
     Command::new("adb").arg("kill-server").status()
 }
 
-fn run_adb_start_server(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -> io::Result<ExitStatus> {
+fn run_adb_start_server(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path, socket: RawFd) -> io::Result<ExitStatus> {
     Command::new("adb")
         .env("TERMUX_USB_DEV", termux_usb_dev)
         .env("TERMUX_USB_FD", termux_usb_fd)
+        .env("TERMUX_ADB_SOCK_FD", socket.to_string())
         .env("LD_PRELOAD", adb_hooks_path)
         .arg("start-server")
         .status()
@@ -187,6 +175,17 @@ fn get_log_file_path(base_dir: &Path) -> PathBuf {
 fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -> anyhow::Result<()> {
     println!("using {}: fd = {}", &termux_usb_dev, termux_usb_fd);
 
+    let (sock_send, sock_recv) =
+        UnixDatagram::pair().context("could not create socket pair")?;
+
+    // we need to unset FD_CLOEXEC flag so that the socket
+    // can be passed to adb when it's run as child process
+    let sock_recv_fd = sock_recv.as_raw_fd();
+    unsafe {
+        let flags = fcntl(sock_recv_fd, F_GETFD);
+        fcntl(sock_recv_fd, F_SETFD, flags & !FD_CLOEXEC);
+    }
+
     // 4. executes `adb kill-server && LD_PRELOAD=libadbhooks.so adb start-server`
     // (with TERMUX_USB_DEV and TERMUX_USB_FD env vars)
     let kill_status = run_adb_kill_server()?;
@@ -194,7 +193,10 @@ fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -
         return Err(anyhow!("adb kill-server exited with error status"));
     }
 
-    let start_status = run_adb_start_server(&termux_usb_dev, &termux_usb_fd, &adb_hooks_path)?;
+    let start_status = run_adb_start_server(
+        &termux_usb_dev, &termux_usb_fd,
+        &adb_hooks_path, sock_recv_fd)?;
+    drop(sock_recv); // close the socket on this side
     if !start_status.success() {
         return Err(anyhow!("adb start-server exited with error status"));
     }
@@ -208,7 +210,7 @@ fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -
     // 6. finds adb server PID and waits for it
     if let Some(p) = system.processes_by_exact_name("adb").next() {
         thread::spawn(|| {
-            if let Err(e) = scan_for_usb_devices() {
+            if let Err(e) = scan_for_usb_devices(sock_send) {
                 eprintln!("{}", e);
             }
         });

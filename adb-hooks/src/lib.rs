@@ -9,7 +9,7 @@ use std::{
             ffi::OsStrExt,
             net::UnixDatagram,
         },
-        raw::{c_char, c_int}
+        raw::{c_char, c_int}, fd::{RawFd, FromRawFd}
     },
     sync::atomic::{AtomicBool, Ordering}, collections::HashMap,
     path::PathBuf, ptr::null_mut, time::Duration,
@@ -207,7 +207,11 @@ fn libusb_device_serial_ctor() {
     env_logger::init();
 
     if let Ok(_) = env::var("TERMUX_ADB_SERVER_RUNNING") {
-        thread::spawn(start_socket_listener);
+        thread::spawn(|| {
+            if let Err(e) = start_socket_listener() {
+                error!("socket listener error: {}", e);
+            }
+        });
     }
 
     // libusb_init hanged when called as Lazy static from opendir
@@ -219,28 +223,23 @@ fn libusb_device_serial_ctor() {
     LIBUSB_INITIALIZED.store(true, Ordering::SeqCst);
 }
 
-fn start_socket_listener() {
+fn start_socket_listener() -> anyhow::Result<()> {
     // "/data/data/com.termux/files/usr/tmp"
-    let sock_path = "/data/data/com.termux/files/usr/tmp/termux-adb.sock";
-    match UnixDatagram::bind(sock_path) {
-        Ok(socket) => {
-            info!("listening on {}", sock_path);
-            _ = socket.set_read_timeout(None);
-            loop {
-                let mut buf = vec![0; 64];
-                match socket.recv(buf.as_mut_slice()) {
-                    Ok(size) => {
-                        let msg = String::from_utf8_lossy(&buf[0..size]);
-                        info!("received message (size={}): {}", size, msg);
-                    }
-                    Err(e) => {
-                        error!("message receive error: {}", e);
-                    }
-                }
+    let sock_fd: RawFd = env::var("TERMUX_ADB_SOCK_FD")?.parse()?;
+    let socket = unsafe{ UnixDatagram::from_raw_fd(sock_fd) };
+
+    info!("listening on socket fd {}", sock_fd);
+    _ = socket.set_read_timeout(None);
+    loop {
+        let mut buf = vec![0; 64];
+        match socket.recv(buf.as_mut_slice()) {
+            Ok(size) => {
+                let msg = String::from_utf8_lossy(&buf[0..size]);
+                info!("received message (size={}): {}", size, msg);
             }
-        }
-        Err(e) => {
-            error!("unix datagram socket error: {}", e);
+            Err(e) => {
+                error!("message receive error: {}", e);
+            }
         }
     }
 }
