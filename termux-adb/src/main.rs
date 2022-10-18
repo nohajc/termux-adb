@@ -111,7 +111,7 @@ fn scan_for_usb_devices() -> anyhow::Result<()> {
     }
 }
 
-fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) -> anyhow::Result<()> {
+fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
     let pid = unistd::Pid::from_raw(i32::from(pid));
     let ticker = tick(Duration::from_secs(1));
 
@@ -142,7 +142,6 @@ fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) -> anyhow::Result<()> {
             }
         }
     }
-    Ok(())
 }
 
 fn run_under_termux_usb(usb_dev_path: &str, termux_adb_path: &Path) {
@@ -213,7 +212,7 @@ fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -
                 eprintln!("{}", e);
             }
         });
-        wait_for_adb_end(p.pid(), new_signal_receiver()?)?;
+        wait_for_adb_end(p.pid(), new_signal_receiver()?);
     };
 
     Ok(())
