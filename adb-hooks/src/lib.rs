@@ -43,6 +43,7 @@ use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 use log::{debug, info, error};
 
 use ctor::ctor;
+use sendfd::RecvWithFd;
 
 const BASE_DIR_ORIG: &str = "/dev/bus/usb";
 
@@ -224,18 +225,21 @@ fn libusb_device_serial_ctor() {
 }
 
 fn start_socket_listener() -> anyhow::Result<()> {
-    // "/data/data/com.termux/files/usr/tmp"
     let sock_fd: RawFd = env::var("TERMUX_ADB_SOCK_FD")?.parse()?;
     let socket = unsafe{ UnixDatagram::from_raw_fd(sock_fd) };
 
     info!("listening on socket fd {}", sock_fd);
     _ = socket.set_read_timeout(None);
     loop {
-        let mut buf = vec![0; 64];
-        match socket.recv(buf.as_mut_slice()) {
-            Ok(size) => {
+        let mut buf = vec![0; 256];
+        let mut fds = vec![0; 1];
+        match socket.recv_with_fd(buf.as_mut_slice(), fds.as_mut_slice()) {
+            Ok((_, 0)) => {
+                error!("received message without usb fd");
+            }
+            Ok((size, _)) => {
                 let msg = String::from_utf8_lossy(&buf[0..size]);
-                info!("received message (size={}): {}", size, msg);
+                info!("received message (size={}) with fd={}: {}", size, fds[0], msg);
             }
             Err(e) => {
                 error!("message receive error: {}", e);

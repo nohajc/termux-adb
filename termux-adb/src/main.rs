@@ -5,7 +5,8 @@ use std::{
     os::{
         unix::{
             net::UnixDatagram,
-            process::CommandExt, prelude::{AsRawFd, RawFd},
+            process::CommandExt,
+            prelude::{AsRawFd, RawFd, FromRawFd, IntoRawFd},
         },
         raw::c_int
     },
@@ -18,6 +19,7 @@ use nix::{
     sys::signal::{self, Signal},
     libc::{fcntl, F_GETFD, F_SETFD, FD_CLOEXEC},
 };
+use sendfd::SendWithFd;
 use sysinfo::{SystemExt, RefreshKind, ProcessRefreshKind, ProcessExt, Pid};
 use which::which;
 
@@ -87,15 +89,37 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
     Err(anyhow!("error: adb server didn't start, check the log: {}", adb_log))
 }
 
-fn scan_for_usb_devices(socket: UnixDatagram) -> anyhow::Result<()> {
+fn scan_for_usb_devices(socket: UnixDatagram, termux_usb_dev: String, termux_adb_path: PathBuf) -> anyhow::Result<()> {
+    let mut last_usb_list = if termux_usb_dev == "none" {
+        vec![]
+    } else {
+        vec![termux_usb_dev]
+    };
+
     loop {
-        println!("| sending message to socket");
-        match socket.send(b"hello from termux-adb monitor") {
-            Ok(size) => println!("> message sent to socket: size={}", size),
-            Err(e) => eprintln!("socket send error: {}", e)
+        // println!("| sending message to socket");
+        // match socket.send(b"hello from termux-adb monitor") {
+        //     Ok(size) => println!("> message sent to socket: size={}", size),
+        //     Err(e) => eprintln!("socket send error: {}", e)
+        // }
+        let usb_dev_list = get_termux_usb_list();
+        // { println!("requesting {}", &p); p });
+
+        let usb_dev_path = usb_dev_list.iter().next();
+
+        if let Some(usb_dev_path) = usb_dev_path {
+            if last_usb_list.iter().find(|&dev| dev == usb_dev_path) == None {
+                println!("new device connected: {}", usb_dev_path);
+                run_under_termux_usb(&usb_dev_path, &termux_adb_path, Some(socket.into_raw_fd()));
+                break; // this is not reachable due to termux-usb exec but we do it to satisfy the borrow checker
+            }
+        } else if last_usb_list.len() > 0 {
+            println!("all devices disconnected");
         }
+        last_usb_list = usb_dev_list;
         thread::sleep(Duration::from_millis(2500));
     }
+    Ok(())
 }
 
 fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
@@ -131,12 +155,18 @@ fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
     }
 }
 
-fn run_under_termux_usb(usb_dev_path: &str, termux_adb_path: &Path) {
-    Command::new("termux-usb")
-        .env("TERMUX_USB_DEV", usb_dev_path)
+fn run_under_termux_usb(usb_dev_path: &str, termux_adb_path: &Path, sock_send_fd: Option<RawFd>) {
+    let mut cmd = Command::new("termux-usb");
+
+    cmd.env("TERMUX_USB_DEV", usb_dev_path)
         .arg("-e").arg(termux_adb_path)
-        .args(["-E", "-r", usb_dev_path])
-        .exec();
+        .args(["-E", "-r", usb_dev_path]);
+
+    if let Some(sock_send_fd) = sock_send_fd {
+        cmd.env("TERMUX_ADB_SOCK_FD", sock_send_fd.to_string());
+    }
+
+    cmd.exec();
 }
 
 const REQUIRED_CMDS: [&str; 2] = ["adb", "termux-usb"];
@@ -172,7 +202,16 @@ fn get_log_file_path(base_dir: &Path) -> PathBuf {
     result
 }
 
-fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -> anyhow::Result<()> {
+fn clear_cloexec_flag(socket: &UnixDatagram) -> RawFd {
+    let sock_fd = socket.as_raw_fd();
+    unsafe {
+        let flags = fcntl(sock_fd, F_GETFD);
+        fcntl(sock_fd, F_SETFD, flags & !FD_CLOEXEC);
+    }
+    sock_fd
+}
+
+fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path, termux_adb_path: &Path) -> anyhow::Result<()> {
     println!("using {}: fd = {}", &termux_usb_dev, termux_usb_fd);
 
     let (sock_send, sock_recv) =
@@ -180,11 +219,8 @@ fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -
 
     // we need to unset FD_CLOEXEC flag so that the socket
     // can be passed to adb when it's run as child process
-    let sock_recv_fd = sock_recv.as_raw_fd();
-    unsafe {
-        let flags = fcntl(sock_recv_fd, F_GETFD);
-        fcntl(sock_recv_fd, F_SETFD, flags & !FD_CLOEXEC);
-    }
+    _ = clear_cloexec_flag(&sock_send);
+    let sock_recv_fd = clear_cloexec_flag(&sock_recv);
 
     // 4. executes `adb kill-server && LD_PRELOAD=libadbhooks.so adb start-server`
     // (with TERMUX_USB_DEV and TERMUX_USB_FD env vars)
@@ -201,6 +237,11 @@ fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -
         return Err(anyhow!("adb start-server exited with error status"));
     }
 
+    phase_three(sock_send, termux_usb_dev, termux_adb_path)?;
+    Ok(())
+}
+
+fn phase_three(sock_send: UnixDatagram, termux_usb_dev: &str, termux_adb_path: &Path) -> anyhow::Result<()> {
     let system = sysinfo::System::new_with_specifics(
         RefreshKind::new()
             .with_processes(ProcessRefreshKind::new())
@@ -209,24 +250,20 @@ fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -
     // 5. attach signal handler which kills adb before termux-adb is terminated itself
     // 6. finds adb server PID and waits for it
     if let Some(p) = system.processes_by_exact_name("adb").next() {
-        thread::spawn(|| {
-            if let Err(e) = scan_for_usb_devices(sock_send) {
-                eprintln!("{}", e);
+        thread::spawn({
+            let termux_usb_dev = termux_usb_dev.to_owned();
+            let termux_adb_path = termux_adb_path.to_owned();
+            || {
+                if let Err(e) = scan_for_usb_devices(sock_send, termux_usb_dev, termux_adb_path) {
+                    eprintln!("{}", e);
+                }
             }
         });
         wait_for_adb_end(p.pid(), new_signal_receiver()?);
     };
-
     Ok(())
 }
 
-// TODO: termux-adb could continually keep track of usb devices and send valid
-// file descriptors to libadbhooks.so using some IPC mechanism like unix domain socket
-//
-// for that to work though, it has to keep execing itself through termux-usb
-// but not restart adb server each time; that means we want to check if libadbhooks.so
-// is already injected and that can be determined by reading from procfs memory map
-// (https://docs.rs/procfs/latest/procfs/process/struct.Process.html#method.maps)
 fn run() -> anyhow::Result<()> {
     check_dependencies()?;
 
@@ -241,7 +278,21 @@ fn run() -> anyhow::Result<()> {
 
     match (env::var("TERMUX_USB_DEV"), env::var("TERMUX_USB_FD")) {
         (Ok(termux_usb_dev), Ok(termux_usb_fd)) => {
-            phase_two(&termux_usb_dev, &termux_usb_fd, &adb_hooks_path)?;
+            if let Ok(sock_send_fd) = env::var("TERMUX_ADB_SOCK_FD") {
+                let socket = unsafe{ UnixDatagram::from_raw_fd(sock_send_fd.parse()?) };
+                // send termux_usb_dev and termux_usb_fd to adb-hooks
+                match socket.send_with_fd(termux_usb_dev.as_bytes(), &[termux_usb_fd.parse()?]) {
+                    Ok(_) => {
+                        println!("found {}, sending fd {} to adb-hooks", &termux_usb_dev, &termux_usb_fd);
+                    }
+                    Err(e) => {
+                        eprintln!("error sending usb fd to adb-hooks: {}", e);
+                    }
+                }
+                phase_three(socket, &termux_usb_dev,&termux_adb_path)?;
+            } else {
+                phase_two(&termux_usb_dev, &termux_usb_fd, &adb_hooks_path, &termux_adb_path)?;
+            }
         }
         _ => {
             let tmpdir = get_tmp_dir_path();
@@ -270,11 +321,11 @@ fn run() -> anyhow::Result<()> {
             if let Some(usb_dev_path) = usb_dev_path {
                 // 2. sets environment variable TERMUX_USB_DEV={usb_dev_path}
                 // 3. executes termux-usb -e termux-adb -E -r {usb_dev_path}
-                run_under_termux_usb(&usb_dev_path, &termux_adb_path);
+                run_under_termux_usb(&usb_dev_path, &termux_adb_path, None);
             } else {
                 println!("no device connected yet");
                 // if no usb device found yet, start adb server directly
-                phase_two("none", "-1", &adb_hooks_path)?;
+                phase_two("none", "-1", &adb_hooks_path, &termux_adb_path)?;
             }
         }
     }

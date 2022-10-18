@@ -20,3 +20,4 @@ redhook = { git = "https://github.com/nohajc/redhook.git", branch = "enable-andr
 rusb = { version = "0.9.1", git = "https://github.com/nohajc/rusb.git", features = ["nolink"] }
 log = "0.4.0"
 env_logger = "0.9.0"
+sendfd = "0.4.3"
