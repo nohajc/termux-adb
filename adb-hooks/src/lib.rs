@@ -239,6 +239,7 @@ fn start_socket_listener() -> anyhow::Result<()> {
             }
             Ok((size, _)) => {
                 let msg = String::from_utf8_lossy(&buf[0..size]);
+                // TODO: use the received info as TERMUX_USB_DEV and TERMUX_USB_FD
                 info!("received message (size={}) with fd={}: {}", size, fds[0], msg);
             }
             Err(e) => {
