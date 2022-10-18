@@ -5,11 +5,15 @@ use std::{
     ffi::{CStr, OsStr},
     mem,
     os::{
-        unix::ffi::OsStrExt,
+        unix::{
+            ffi::OsStrExt,
+            net::UnixDatagram,
+        },
         raw::{c_char, c_int}
     },
     sync::atomic::{AtomicBool, Ordering}, collections::HashMap,
     path::PathBuf, ptr::null_mut, time::Duration,
+    thread,
 };
 
 use anyhow::Context;
@@ -201,12 +205,44 @@ static LIBUSB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 #[ctor]
 fn libusb_device_serial_ctor() {
     env_logger::init();
+
+    if let Ok(_) = env::var("TERMUX_ADB_SERVER_RUNNING") {
+        thread::spawn(start_socket_listener);
+    }
+
     // libusb_init hanged when called as Lazy static from opendir
     // so instead we use global constructor function which resolves the issue
     if let Some(usb_sn) = get_usb_device_serial() {
         info!("libusb device serial: {}", &usb_sn.number);
     }
+
     LIBUSB_INITIALIZED.store(true, Ordering::SeqCst);
+}
+
+fn start_socket_listener() {
+    // "/data/data/com.termux/files/usr/tmp"
+    let sock_path = "/data/data/com.termux/files/usr/tmp/termux-adb.sock";
+    match UnixDatagram::bind(sock_path) {
+        Ok(socket) => {
+            info!("listening on {}", sock_path);
+            _ = socket.set_read_timeout(None);
+            loop {
+                let mut buf = vec![0; 64];
+                match socket.recv(buf.as_mut_slice()) {
+                    Ok(size) => {
+                        let msg = String::from_utf8_lossy(&buf[0..size]);
+                        info!("received message (size={}): {}", size, msg);
+                    }
+                    Err(e) => {
+                        error!("message receive error: {}", e);
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            error!("unix datagram socket error: {}", e);
+        }
+    }
 }
 
 static DIR_MAP: Lazy<HashMap<PathBuf, DirStream>> = Lazy::new(|| {

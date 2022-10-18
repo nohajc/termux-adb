@@ -2,7 +2,13 @@ use std::{
     env,
     process::{Command, ExitCode, ExitStatus},
     io::{self, BufRead}, time::Duration, str,
-    os::{unix::process::CommandExt, raw::c_int},
+    os::{
+        unix::{
+            net::UnixDatagram,
+            process::CommandExt,
+        },
+        raw::c_int
+    },
     path::{Path, PathBuf}, thread, fs::File,
 };
 use anyhow::{anyhow, Context};
@@ -77,7 +83,35 @@ fn wait_for_adb_start(log_file_path: PathBuf) -> anyhow::Result<()> {
     Err(anyhow!("error: adb server didn't start, check the log: {}", adb_log))
 }
 
-fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
+fn scan_for_usb_devices() -> anyhow::Result<()> {
+    let sock_path = "/data/data/com.termux/files/usr/tmp/termux-adb.sock";
+    let socket = UnixDatagram::unbound().context("failed to create UDS")?;
+    let mut socket_connected = false;
+
+    loop {
+        if !socket_connected {
+            match socket.connect(sock_path) {
+                Ok(()) => {
+                    socket_connected = true;
+                    println!("socket connected");
+                }
+                Err(e) => {
+                    eprintln!("socket connect error: {}", e);
+                }
+            }
+        }
+        if socket_connected {
+            println!("| sending message to socket");
+            match socket.send(b"hello from termux-adb monitor") {
+                Ok(size) => println!("> message sent to socket: size={}", size),
+                Err(e) => eprintln!("socket send error: {}", e)
+            }
+        }
+        thread::sleep(Duration::from_millis(2500));
+    }
+}
+
+fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) -> anyhow::Result<()> {
     let pid = unistd::Pid::from_raw(i32::from(pid));
     let ticker = tick(Duration::from_secs(1));
 
@@ -108,6 +142,7 @@ fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
             }
         }
     }
+    Ok(())
 }
 
 fn run_under_termux_usb(usb_dev_path: &str, termux_adb_path: &Path) {
@@ -173,7 +208,12 @@ fn phase_two(termux_usb_dev: &str, termux_usb_fd: &str, adb_hooks_path: &Path) -
     // 5. attach signal handler which kills adb before termux-adb is terminated itself
     // 6. finds adb server PID and waits for it
     if let Some(p) = system.processes_by_exact_name("adb").next() {
-        wait_for_adb_end(p.pid(), new_signal_receiver()?);
+        thread::spawn(|| {
+            if let Err(e) = scan_for_usb_devices() {
+                eprintln!("{}", e);
+            }
+        });
+        wait_for_adb_end(p.pid(), new_signal_receiver()?)?;
     };
 
     Ok(())
