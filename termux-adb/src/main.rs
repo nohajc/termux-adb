@@ -5,8 +5,8 @@ use std::{
     os::{
         unix::{
             net::UnixDatagram,
-            process::CommandExt,
-            prelude::{AsRawFd, RawFd, FromRawFd, IntoRawFd},
+            process::{CommandExt, ExitStatusExt},
+            prelude::{AsRawFd, RawFd, FromRawFd},
         },
         raw::c_int
     },
@@ -97,21 +97,13 @@ fn scan_for_usb_devices(socket: UnixDatagram, termux_usb_dev: String, termux_adb
     };
 
     loop {
-        // println!("| sending message to socket");
-        // match socket.send(b"hello from termux-adb monitor") {
-        //     Ok(size) => println!("> message sent to socket: size={}", size),
-        //     Err(e) => eprintln!("socket send error: {}", e)
-        // }
         let usb_dev_list = get_termux_usb_list();
-        // { println!("requesting {}", &p); p });
-
         let usb_dev_path = usb_dev_list.iter().next();
 
         if let Some(usb_dev_path) = usb_dev_path {
             if last_usb_list.iter().find(|&dev| dev == usb_dev_path) == None {
                 println!("new device connected: {}", usb_dev_path);
-                run_under_termux_usb(&usb_dev_path, &termux_adb_path, Some(socket.into_raw_fd()));
-                break; // this is not reachable due to termux-usb exec but we do it to satisfy the borrow checker
+                _ = run_under_termux_usb(&usb_dev_path, &termux_adb_path, Some(socket.as_raw_fd()));
             }
         } else if last_usb_list.len() > 0 {
             println!("all devices disconnected");
@@ -119,7 +111,6 @@ fn scan_for_usb_devices(socket: UnixDatagram, termux_usb_dev: String, termux_adb
         last_usb_list = usb_dev_list;
         thread::sleep(Duration::from_millis(2500));
     }
-    Ok(())
 }
 
 fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
@@ -155,7 +146,7 @@ fn wait_for_adb_end(pid: Pid, signals: Receiver<c_int>) {
     }
 }
 
-fn run_under_termux_usb(usb_dev_path: &str, termux_adb_path: &Path, sock_send_fd: Option<RawFd>) {
+fn run_under_termux_usb(usb_dev_path: &str, termux_adb_path: &Path, sock_send_fd: Option<RawFd>) -> io::Result<ExitStatus> {
     let mut cmd = Command::new("termux-usb");
 
     cmd.env("TERMUX_USB_DEV", usb_dev_path)
@@ -164,9 +155,11 @@ fn run_under_termux_usb(usb_dev_path: &str, termux_adb_path: &Path, sock_send_fd
 
     if let Some(sock_send_fd) = sock_send_fd {
         cmd.env("TERMUX_ADB_SOCK_FD", sock_send_fd.to_string());
+        return cmd.status();
     }
 
     cmd.exec();
+    Ok(ExitStatus::from_raw(0)) // unreachable
 }
 
 const REQUIRED_CMDS: [&str; 2] = ["adb", "termux-usb"];
@@ -289,7 +282,6 @@ fn run() -> anyhow::Result<()> {
                         eprintln!("error sending usb fd to adb-hooks: {}", e);
                     }
                 }
-                phase_three(socket, &termux_usb_dev,&termux_adb_path)?;
             } else {
                 phase_two(&termux_usb_dev, &termux_usb_fd, &adb_hooks_path, &termux_adb_path)?;
             }
@@ -321,7 +313,7 @@ fn run() -> anyhow::Result<()> {
             if let Some(usb_dev_path) = usb_dev_path {
                 // 2. sets environment variable TERMUX_USB_DEV={usb_dev_path}
                 // 3. executes termux-usb -e termux-adb -E -r {usb_dev_path}
-                run_under_termux_usb(&usb_dev_path, &termux_adb_path, None);
+                _ = run_under_termux_usb(&usb_dev_path, &termux_adb_path, None);
             } else {
                 println!("no device connected yet");
                 // if no usb device found yet, start adb server directly
