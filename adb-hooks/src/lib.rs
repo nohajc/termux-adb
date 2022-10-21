@@ -254,11 +254,10 @@ fn start_socket_listener() -> anyhow::Result<()> {
                 // use the received info as TERMUX_USB_DEV and TERMUX_USB_FD
                 info!("received message (size={}) with fd={}: {}", size, fds[0], usb_dev_path.display());
 
-                update_dir_map(&mut DIR_MAP.lock().unwrap(), &usb_dev_path);
-                *TERMUX_USB_DEV.lock().unwrap() = Some(usb_dev_path);
-                *TERMUX_USB_FD.lock().unwrap() = Some(fds[0]);
-
-                *TERMUX_USB_SERIAL.lock().unwrap() = print_err_and_convert(init_libusb_device_serial());
+                { update_dir_map(&mut DIR_MAP.lock().unwrap(), &usb_dev_path); }
+                { *TERMUX_USB_DEV.lock().unwrap() = Some(usb_dev_path); }
+                { *TERMUX_USB_FD.lock().unwrap() = Some(fds[0]); }
+                { *TERMUX_USB_SERIAL.lock().unwrap() = print_err_and_convert(init_libusb_device_serial()); }
             }
             Err(e) => {
                 error!("message receive error: {}", e);
@@ -411,13 +410,15 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
         debug!("called open with pathname={} flags={}", name, flags);
 
         let name_path = PathBuf::from(&name);
-        if Some(&name_path) == TERMUX_USB_DEV.lock().unwrap().as_ref() {
-            if let Some(usb_fd) = get_termux_fd() {
-                if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
-                    error!("error seeking fd {}: {}", usb_fd, e);
+        {
+            if Some(&name_path) == TERMUX_USB_DEV.lock().unwrap().as_ref() {
+                if let Some(usb_fd) = get_termux_fd() {
+                    if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
+                        error!("error seeking fd {}: {}", usb_fd, e);
+                    }
+                    info!("open hook returning fd with value {}", usb_fd);
+                    return usb_fd;
                 }
-                info!("open hook returning fd with value {}", usb_fd);
-                return usb_fd;
             }
         }
 
