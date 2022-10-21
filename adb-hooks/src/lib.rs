@@ -11,8 +11,11 @@ use std::{
         },
         raw::{c_char, c_int}, fd::{RawFd, FromRawFd}
     },
-    sync::atomic::{AtomicBool, Ordering}, collections::HashMap,
-    path::PathBuf, ptr::null_mut, time::Duration,
+    sync::{atomic::{AtomicBool, Ordering}, Mutex},
+    collections::HashMap,
+    path::{Path, PathBuf},
+    ptr::null_mut,
+    time::Duration,
     thread,
 };
 
@@ -95,23 +98,28 @@ fn dirent_new(off: i64, typ: c_uchar, name: &OsStr) -> dirent {
     entry
 }
 
-static TERMUX_USB_FD: Lazy<Option<c_int>> = Lazy::new(|| {
+static TERMUX_USB_FD: Lazy<Mutex<Option<c_int>>> = Lazy::new(|| Mutex::new({
     env::var("TERMUX_USB_FD").map(|usb_fd_str| {
         usb_fd_str.parse::<c_int>().ok()
     }).ok().flatten().and_then(|fd| match fd {
         -1 => None,
         i => Some(i)
     })
-});
+}));
 
-static TERMUX_USB_DEV: Lazy<Option<PathBuf>> = Lazy::new(|| {
+fn get_termux_fd() -> Option<c_int> {
+    *TERMUX_USB_FD.lock().unwrap()
+}
+
+static TERMUX_USB_DEV: Lazy<Mutex<Option<PathBuf>>> = Lazy::new(|| Mutex::new({
     env::var("TERMUX_USB_DEV").ok()
         .and_then(|dev| match dev.as_str() {
             "none" => None,
             _ => Some(dev)
         }).map(|str| PathBuf::from(str))
-});
+}));
 
+#[derive(Clone)]
 struct UsbSerial {
     number: String,
     path: PathBuf,
@@ -122,7 +130,7 @@ fn init_libusb_device_serial() -> anyhow::Result<UsbSerial> {
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
 
     debug!("reading TERMUX_USB_FD");
-    let usb_fd = TERMUX_USB_FD.context("error: missing TERMUX_USB_FD")?;
+    let usb_fd = get_termux_fd().context("error: missing TERMUX_USB_FD")?;
 
     lseek(usb_fd, 0, Whence::SeekSet)
         .with_context(|| format!("error seeking fd: {}", usb_fd))?;
@@ -182,23 +190,27 @@ pub const fn minor(dev: u64) -> u64 {
     ((dev      ) & 0x0000_00ff)
 }
 
-static TERMUX_USB_SERIAL: Lazy<Option<UsbSerial>> = Lazy::new(|| {
-    if let Ok(_) = env::var("TERMUX_ADB_SERVER_RUNNING") {
-        match init_libusb_device_serial() {
-            Ok(sn) => Some(sn),
-            Err(e) => {
-                error!("{}", e);
-                None
-            }
+fn print_err_and_convert<T>(r: anyhow::Result<T>) -> Option<T> {
+    match r {
+        Ok(v) => Some(v),
+        Err(e) => {
+            error!("{}", e);
+            None
         }
+    }
+}
+
+static TERMUX_USB_SERIAL: Lazy<Mutex<Option<UsbSerial>>> = Lazy::new(|| Mutex::new({
+    if let Ok(_) = env::var("TERMUX_ADB_SERVER_RUNNING") {
+        print_err_and_convert(init_libusb_device_serial())
     } else {
         env::set_var("TERMUX_ADB_SERVER_RUNNING", "true");
         None
     }
-});
+}));
 
-fn get_usb_device_serial<'a>() -> Option<&'a UsbSerial> {
-    TERMUX_USB_SERIAL.as_ref()
+fn get_usb_device_serial() -> Option<UsbSerial> {
+    TERMUX_USB_SERIAL.lock().unwrap().clone()
 }
 
 static LIBUSB_INITIALIZED: AtomicBool = AtomicBool::new(false);
@@ -238,9 +250,15 @@ fn start_socket_listener() -> anyhow::Result<()> {
                 error!("received message without usb fd");
             }
             Ok((size, _)) => {
-                let msg = String::from_utf8_lossy(&buf[0..size]);
-                // TODO: use the received info as TERMUX_USB_DEV and TERMUX_USB_FD
-                info!("received message (size={}) with fd={}: {}", size, fds[0], msg);
+                let usb_dev_path = PathBuf::from(String::from_utf8_lossy(&buf[0..size]).as_ref());
+                // use the received info as TERMUX_USB_DEV and TERMUX_USB_FD
+                info!("received message (size={}) with fd={}: {}", size, fds[0], usb_dev_path.display());
+
+                update_dir_map(&mut DIR_MAP.lock().unwrap(), &usb_dev_path);
+                *TERMUX_USB_DEV.lock().unwrap() = Some(usb_dev_path);
+                *TERMUX_USB_FD.lock().unwrap() = Some(fds[0]);
+
+                *TERMUX_USB_SERIAL.lock().unwrap() = print_err_and_convert(init_libusb_device_serial());
             }
             Err(e) => {
                 error!("message receive error: {}", e);
@@ -249,33 +267,39 @@ fn start_socket_listener() -> anyhow::Result<()> {
     }
 }
 
-static DIR_MAP: Lazy<HashMap<PathBuf, DirStream>> = Lazy::new(|| {
-    let mut dir_map = HashMap::new();
-    if let Some(ref usb_dev_path) = *TERMUX_USB_DEV {
-        if let Some(usb_dev_name) = usb_dev_path.file_name() {
-            let mut last_entry = dirent_new(
-                0, DT_CHR, usb_dev_name
+fn update_dir_map(dir_map: &mut HashMap<PathBuf, DirStream>, usb_dev_path: &Path) {
+    dir_map.clear();
+
+    if let Some(usb_dev_name) = usb_dev_path.file_name() {
+        let mut last_entry = dirent_new(
+            0, DT_CHR, usb_dev_name
+        );
+        let mut current_dir = usb_dev_path.to_owned();
+
+        while current_dir.pop() {
+            dir_map.insert(current_dir.clone(), DirStream{
+                pos: 0,
+                entry: last_entry.clone(),
+            });
+            last_entry = dirent_new(
+                0, DT_DIR, current_dir.file_name().unwrap()
             );
-            let mut current_dir = usb_dev_path.clone();
 
-            while current_dir.pop() {
-                dir_map.insert(current_dir.clone(), DirStream{
-                    pos: 0,
-                    entry: last_entry.clone(),
-                });
-                last_entry = dirent_new(
-                    0, DT_DIR, current_dir.file_name().unwrap()
-                );
-
-                if current_dir.as_os_str() == BASE_DIR_ORIG {
-                    break;
-                }
+            if current_dir.as_os_str() == BASE_DIR_ORIG {
+                break;
             }
         }
     }
+}
+
+static DIR_MAP: Lazy<Mutex<HashMap<PathBuf, DirStream>>> = Lazy::new(|| Mutex::new({
+    let mut dir_map = HashMap::new();
+    if let Some(ref usb_dev_path) = *TERMUX_USB_DEV.lock().unwrap() {
+        update_dir_map(&mut dir_map, usb_dev_path);
+    }
 
     dir_map
-});
+}));
 
 enum HookedDir {
     Native(*mut DIR),
@@ -299,7 +323,7 @@ hook! {
 
         if name_str.starts_with(BASE_DIR_ORIG) {
             let name_osstr = to_os_str(name_cstr);
-            if let Some(dirstream) = DIR_MAP.get(&PathBuf::from(name_osstr)) {
+            if let Some(dirstream) = DIR_MAP.lock().unwrap().get(&PathBuf::from(name_osstr)) {
                 debug!("called opendir with {}, remapping to virtual DirStream", &name_str);
                 return HookedDir::Virtual(dirstream.to_owned()).into();
             }
@@ -363,7 +387,7 @@ hook! {
 
 hook! {
     unsafe fn close(fd: c_int) -> c_int => tadb_close {
-        if let Some(usb_fd) = *TERMUX_USB_FD {
+        if let Some(usb_fd) = get_termux_fd() {
             // usb fd must not be closed
             if usb_fd == fd {
                 return 0;
@@ -387,8 +411,8 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
         debug!("called open with pathname={} flags={}", name, flags);
 
         let name_path = PathBuf::from(&name);
-        if Some(&name_path) == TERMUX_USB_DEV.as_ref() {
-            if let Some(usb_fd) = *TERMUX_USB_FD {
+        if Some(&name_path) == TERMUX_USB_DEV.lock().unwrap().as_ref() {
+            if let Some(usb_fd) = get_termux_fd() {
                 if let Err(e) = lseek(usb_fd, 0, Whence::SeekSet) {
                     error!("error seeking fd {}: {}", usb_fd, e);
                 }
@@ -399,7 +423,7 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
 
         if LIBUSB_INITIALIZED.load(Ordering::SeqCst) {
             let usb_serial = get_usb_device_serial();
-            if Some(&name_path) == usb_serial.map(|s| &s.path) {
+            if Some(&name_path) == usb_serial.as_ref().map(|s| &s.path) {
                 if let Ok(serial_fd) = memfd_create(
                     CStr::from_ptr("usb-serial\0".as_ptr() as *const c_char),
                     MemFdCreateFlag::empty())
