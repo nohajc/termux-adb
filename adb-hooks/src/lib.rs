@@ -125,12 +125,9 @@ struct UsbSerial {
     path: PathBuf,
 }
 
-fn init_libusb_device_serial() -> anyhow::Result<UsbSerial> {
+fn init_libusb_device_serial(usb_fd: c_int) -> anyhow::Result<UsbSerial> {
     debug!("calling libusb_set_option");
     unsafe{ rusb::ffi::libusb_set_option(null_mut(), LIBUSB_OPTION_NO_DEVICE_DISCOVERY) };
-
-    debug!("reading TERMUX_USB_FD");
-    let usb_fd = get_termux_fd().context("error: missing TERMUX_USB_FD")?;
 
     lseek(usb_fd, 0, Whence::SeekSet)
         .with_context(|| format!("error seeking fd: {}", usb_fd))?;
@@ -202,7 +199,10 @@ fn print_err_and_convert<T>(r: anyhow::Result<T>) -> Option<T> {
 
 static TERMUX_USB_SERIAL: Lazy<Mutex<Option<UsbSerial>>> = Lazy::new(|| Mutex::new({
     if let Ok(_) = env::var("TERMUX_ADB_SERVER_RUNNING") {
-        print_err_and_convert(init_libusb_device_serial())
+        debug!("reading TERMUX_USB_FD");
+        print_err_and_convert(get_termux_fd().context("error: missing TERMUX_USB_FD")).and_then(|usb_fd| {
+            print_err_and_convert(init_libusb_device_serial(usb_fd))
+        })
     } else {
         env::set_var("TERMUX_ADB_SERVER_RUNNING", "true");
         None
@@ -219,18 +219,18 @@ static LIBUSB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 fn libusb_device_serial_ctor() {
     env_logger::init();
 
+    // libusb_init hanged when called as Lazy static from opendir
+    // so instead we use global constructor function which resolves the issue
+    if let Some(usb_sn) = get_usb_device_serial() {
+        info!("libusb device serial: {}", &usb_sn.number);
+    }
+
     if let Ok(_) = env::var("TERMUX_ADB_SERVER_RUNNING") {
         thread::spawn(|| {
             if let Err(e) = start_socket_listener() {
                 error!("socket listener error: {}", e);
             }
         });
-    }
-
-    // libusb_init hanged when called as Lazy static from opendir
-    // so instead we use global constructor function which resolves the issue
-    if let Some(usb_sn) = get_usb_device_serial() {
-        info!("libusb device serial: {}", &usb_sn.number);
     }
 
     LIBUSB_INITIALIZED.store(true, Ordering::SeqCst);
@@ -251,13 +251,14 @@ fn start_socket_listener() -> anyhow::Result<()> {
             }
             Ok((size, _)) => {
                 let usb_dev_path = PathBuf::from(String::from_utf8_lossy(&buf[0..size]).as_ref());
+                let usb_fd = fds[0];
                 // use the received info as TERMUX_USB_DEV and TERMUX_USB_FD
-                info!("received message (size={}) with fd={}: {}", size, fds[0], usb_dev_path.display());
+                info!("received message (size={}) with fd={}: {}", size, usb_fd, usb_dev_path.display());
 
-                { update_dir_map(&mut DIR_MAP.lock().unwrap(), &usb_dev_path); }
-                { *TERMUX_USB_DEV.lock().unwrap() = Some(usb_dev_path); }
-                { *TERMUX_USB_FD.lock().unwrap() = Some(fds[0]); }
-                { *TERMUX_USB_SERIAL.lock().unwrap() = print_err_and_convert(init_libusb_device_serial()); }
+                update_dir_map(&mut DIR_MAP.lock().unwrap(), &usb_dev_path);
+                *TERMUX_USB_DEV.lock().unwrap() = Some(usb_dev_path);
+                *TERMUX_USB_FD.lock().unwrap() = Some(usb_fd);
+                *TERMUX_USB_SERIAL.lock().unwrap() = print_err_and_convert(init_libusb_device_serial(usb_fd));
             }
             Err(e) => {
                 error!("message receive error: {}", e);
