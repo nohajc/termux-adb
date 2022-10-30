@@ -20,9 +20,10 @@ use std::{
 };
 
 use anyhow::Context;
+
 use libc::{
     DIR, dirent, O_CREAT, mode_t,
-    DT_CHR, DT_DIR,
+    DT_CHR, DT_DIR, openat, AT_FDCWD,
     c_ushort, c_uchar, c_uint
 };
 
@@ -30,9 +31,13 @@ use once_cell::sync::Lazy;
 
 use rand::Rng;
 
-use redhook::{
-    hook, real,
-};
+// use redhook::{
+//     hook, real,
+// };
+
+mod hook;
+
+use hook::*;
 
 use nix::{
     unistd::{lseek, Whence},
@@ -213,11 +218,26 @@ fn get_usb_device_serial() -> Option<UsbSerial> {
     TERMUX_USB_SERIAL.lock().unwrap().clone()
 }
 
-static LIBUSB_INITIALIZED: AtomicBool = AtomicBool::new(false);
+static LIBADBHOOKS_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+static LIBC_FILE: Lazy<Lib> = Lazy::new(|| Lib::new("libc.so").unwrap());
+static LIBC: Lazy<LibHandle> = Lazy::new(|| LIBC_FILE.handle().unwrap());
+// static LIBC: Lazy<LibHandle> = Lazy::new(lib_handle!("libc.so"));
 
 #[ctor]
-fn libusb_device_serial_ctor() {
+fn libadbhooks_ctor() {
     env_logger::init();
+
+    debug!("libc loaded size: {}", LIBC_FILE.size());
+    debug!("libc ELF loaded: {}", LIBC.elf().is_lib);
+
+    // debug!("opendir hook address: {:?}", opendir as *const usize);
+    // debug!("opendir calculated address: {:?}", *REAL_OPENDIR as *const usize);
+
+    // let dlsym_opendir: OpenDirFn = unsafe{
+    //     mem::transmute(redhook::ld_preload::dlsym_next("opendir\0"))
+    // };
+    // debug!("opendir dlsym address: {:?}", dlsym_opendir as *const usize);
 
     // libusb_init hanged when called as Lazy static from opendir
     // so instead we use global constructor function which resolves the issue
@@ -233,7 +253,7 @@ fn libusb_device_serial_ctor() {
         });
     }
 
-    LIBUSB_INITIALIZED.store(true, Ordering::SeqCst);
+    LIBADBHOOKS_INITIALIZED.store(true, Ordering::SeqCst);
 }
 
 fn start_socket_listener() -> anyhow::Result<()> {
@@ -312,101 +332,130 @@ impl From<HookedDir> for *mut DIR {
     }
 }
 
-hook! {
-    unsafe fn opendir(name: *const c_char) -> *mut DIR => tadb_opendir {
-        if name.is_null() {
-            return real!(opendir)(name);
+type OpenDirFn = unsafe extern "C" fn(*const u8) -> *mut DIR;
+static REAL_OPENDIR: Lazy<OpenDirFn> = Lazy::new(|| func!(LIBC, opendir));
+// static REAL_OPENDIR: Lazy<OpenDirFn> = Lazy::new(|| unsafe{
+//     mem::transmute(redhook::ld_preload::dlsym_next("opendir\0"))
+// });
+
+#[no_mangle]
+unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
+    if name.is_null() {
+        return REAL_OPENDIR(name);
+    }
+
+    let name_cstr = CStr::from_ptr(name);
+    let name_str = to_string(name_cstr);
+
+    if name_str.starts_with(BASE_DIR_ORIG) {
+        let name_osstr = to_os_str(name_cstr);
+        if let Some(dirstream) = DIR_MAP.lock().unwrap().get(&PathBuf::from(name_osstr)) {
+            debug!("called opendir with {}, remapping to virtual DirStream", &name_str);
+            return HookedDir::Virtual(dirstream.to_owned()).into();
         }
+    }
 
-        let name_cstr = CStr::from_ptr(name);
-        let name_str = to_string(name_cstr);
+    debug!("called opendir with {}", &name_str);
+    let dir = REAL_OPENDIR(name);
+    if dir.is_null() {
+        return null_mut();
+    }
+    HookedDir::Native(dir).into()
+}
 
-        if name_str.starts_with(BASE_DIR_ORIG) {
-            let name_osstr = to_os_str(name_cstr);
-            if let Some(dirstream) = DIR_MAP.lock().unwrap().get(&PathBuf::from(name_osstr)) {
-                debug!("called opendir with {}, remapping to virtual DirStream", &name_str);
-                return HookedDir::Virtual(dirstream.to_owned()).into();
+type CloseDirFn = unsafe extern "C" fn(*mut DIR) -> c_int;
+static REAL_CLOSEDIR: Lazy<CloseDirFn> = Lazy::new(|| func!(LIBC, closedir));
+
+#[no_mangle]
+unsafe extern "C" fn closedir(dirp: *mut DIR) -> c_int {
+    if dirp.is_null() {
+        return REAL_CLOSEDIR(dirp);
+    }
+
+    let hooked_dir = Box::from_raw(dirp as *mut HookedDir);
+    match hooked_dir.as_ref() {
+        &HookedDir::Native(dirp) => REAL_CLOSEDIR(dirp),
+        // nothing to do, hooked_dir along with DirStream
+        // will be dropped at the end of this function
+        &HookedDir::Virtual(_) => 0
+    }
+}
+
+type ReadDirFn = unsafe extern "C" fn(*mut DIR) -> *mut dirent;
+static REAL_READDIR: Lazy<ReadDirFn> = Lazy::new(|| func!(LIBC, readdir));
+
+#[no_mangle]
+unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut dirent {
+    if dirp.is_null() {
+        return REAL_READDIR(dirp);
+    }
+
+    let hooked_dir = &mut *(dirp as *mut HookedDir);
+    match hooked_dir {
+        &mut HookedDir::Native(dirp) => {
+            debug!("called readdir with native DIR* {:?}", dirp);
+            let result = REAL_READDIR(dirp);
+            if let Some(r) = result.as_ref() {
+                debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&r.d_name)));
             }
+            result
         }
-
-        debug!("called opendir with {}", &name_str);
-        let dir = real!(opendir)(name);
-        if dir.is_null() {
-            return null_mut();
-        }
-        HookedDir::Native(dir).into()
-    }
-}
-
-hook! {
-    unsafe fn closedir(dirp: *mut DIR) -> c_int => tadb_closedir {
-        if dirp.is_null() {
-            return real!(closedir)(dirp);
-        }
-
-        let hooked_dir = Box::from_raw(dirp as *mut HookedDir);
-        match hooked_dir.as_ref() {
-            &HookedDir::Native(dirp) => real!(closedir)(dirp),
-            // nothing to do, hooked_dir along with DirStream
-            // will be dropped at the end of this function
-            &HookedDir::Virtual(_) => 0
-        }
-    }
-}
-
-hook! {
-    unsafe fn readdir(dirp: *mut DIR) -> *mut dirent => tadb_readdir {
-        if dirp.is_null() {
-            return real!(readdir)(dirp);
-        }
-
-        let hooked_dir = &mut *(dirp as *mut HookedDir);
-        match hooked_dir {
-            &mut HookedDir::Native(dirp) => {
-                debug!("called readdir with native DIR* {:?}", dirp);
-                let result = real!(readdir)(dirp);
-                if let Some(r) = result.as_ref() {
-                    debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&r.d_name)));
+        &mut HookedDir::Virtual(DirStream{ref mut pos, ref mut entry}) => {
+            debug!("called readdir with virtual DirStream");
+            match pos {
+                0 => {
+                    *pos += 1;
+                    debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&entry.d_name)));
+                    entry as *mut dirent
                 }
-                result
-            }
-            &mut HookedDir::Virtual(DirStream{ref mut pos, ref mut entry}) => {
-                debug!("called readdir with virtual DirStream");
-                match pos {
-                    0 => {
-                        *pos += 1;
-                        debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&entry.d_name)));
-                        entry as *mut dirent
-                    }
-                    _ => null_mut()
-                }
+                _ => null_mut()
             }
         }
     }
 }
 
-hook! {
-    unsafe fn close(fd: c_int) -> c_int => tadb_close {
-        if let Some(usb_fd) = get_termux_fd() {
-            // usb fd must not be closed
-            if usb_fd == fd {
-                return 0;
-            }
-        }
-        real!(close)(fd)
+type CloseFn = unsafe extern "C" fn(c_int) -> c_int;
+static REAL_CLOSE: Lazy<CloseFn> = Lazy::new(|| func!(LIBC, close));
+
+static DELAYED_CLOSE_FDS: Mutex<Vec<c_int>> = Mutex::new(vec![]);
+static DELAYED_FDS_PROCESSED: AtomicBool = AtomicBool::new(false);
+
+#[no_mangle]
+unsafe extern "C" fn close(fd: c_int) -> c_int {
+    if !LIBADBHOOKS_INITIALIZED.load(Ordering::SeqCst) {
+        let mut delayed_fds = DELAYED_CLOSE_FDS.lock().unwrap();
+        delayed_fds.push(fd);
+        return 0;
     }
+
+    if !DELAYED_FDS_PROCESSED.load(Ordering::SeqCst) {
+        let mut delayed_fds = DELAYED_CLOSE_FDS.lock().unwrap();
+        for dfd in &*delayed_fds {
+            REAL_CLOSE(*dfd);
+        }
+        delayed_fds.clear();
+        DELAYED_FDS_PROCESSED.store(true, Ordering::SeqCst);
+    }
+
+    if let Some(usb_fd) = get_termux_fd() {
+        // usb fd must not be closed
+        if usb_fd == fd {
+            return 0;
+        }
+    }
+    REAL_CLOSE(fd)
 }
 
-type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
-static REAL_OPEN: Lazy<OpenFn> = Lazy::new(|| unsafe{
-    mem::transmute(redhook::ld_preload::dlsym_next("open\0"))
-});
+// type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
+// static REAL_OPEN: Lazy<OpenFn> = Lazy::new(|| func!(LIBC, open));
+// static REAL_OPEN: Lazy<OpenFn> = Lazy::new(|| unsafe{
+//     mem::transmute(redhook::ld_preload::dlsym_next("open\0"))
+// });
 
 #[no_mangle]
 pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {
     if !pathname.is_null() {
         let name = to_string(CStr::from_ptr(pathname));
-        // prevent infinite recursion when logfile is first initialized
 
         debug!("called open with pathname={} flags={}", name, flags);
 
@@ -423,7 +472,7 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
             }
         }
 
-        if LIBUSB_INITIALIZED.load(Ordering::SeqCst) {
+        if LIBADBHOOKS_INITIALIZED.load(Ordering::SeqCst) {
             let usb_serial = get_usb_device_serial();
             if Some(&name_path) == usb_serial.as_ref().map(|s| &s.path) {
                 if let Ok(serial_fd) = memfd_create(
@@ -447,9 +496,9 @@ pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: .
     }
 
     let result = if (flags & O_CREAT) == 0 {
-        REAL_OPEN(pathname, flags)
+        openat(AT_FDCWD, pathname, flags)
     } else {
-        REAL_OPEN(pathname, flags, args.arg::<mode_t>() as c_uint)
+        openat(AT_FDCWD, pathname, flags, args.arg::<mode_t>() as c_uint)
     };
 
     debug!("open returned fd with value {}", result);
