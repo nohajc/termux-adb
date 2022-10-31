@@ -231,6 +231,9 @@ fn libadbhooks_ctor() {
     debug!("libc loaded size: {}", LIBC_FILE.size());
     debug!("libc ELF loaded: {}", LIBC.elf().is_lib);
 
+    // resolve the address of libc close to prevent deadlock
+    let _real_close = *REAL_CLOSE;
+
     // debug!("opendir hook address: {:?}", opendir as *const usize);
     // debug!("opendir calculated address: {:?}", *REAL_OPENDIR as *const usize);
 

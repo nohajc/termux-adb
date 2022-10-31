@@ -74,7 +74,7 @@ impl<'a> LibHandle<'a> {
 impl Lib {
     pub fn new(filename: &str) -> Option<Self> {
         let (base, _size, path) = find_mapped_library(filename);
-        println!("DEBUG base: {:#x}", base);
+        // println!("DEBUG base: {:#x}", base);
         // let data = unsafe{ slice::from_raw_parts(base as *const u8, size) };
         // let raw = data.to_owned();
         // Some(Lib{base, raw})
@@ -96,9 +96,9 @@ impl<'a> LibHandle<'a> {
         for sym in self.elf.dynsyms.iter() {
             let sym_name = self.elf.dynstrtab.get_at(sym.st_name).unwrap_or("");
             if sym_name == nf.name {
-                println!("DEBUG rel_addr: {:#x}", sym.st_value);
+                // println!("DEBUG rel_addr: {:#x}", sym.st_value);
                 let addr = self.base + sym.st_value as usize;
-                println!("DEBUG abs_addr: {:#x}", addr);
+                // println!("DEBUG abs_addr: {:#x}", addr);
                 return addr;
             }
         }
