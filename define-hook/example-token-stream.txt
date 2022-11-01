@@ -1,0 +1,40 @@
+define_hook: TokenStream [
+	Ident { ident: "pub", span: #0 bytes(15689..15692) },
+	Ident { ident: "unsafe", span: #0 bytes(15693..15699) },
+	Ident { ident: "extern", span: #0 bytes(15700..15706) },
+	Literal { kind: Str, symbol: "C", suffix: None, span: #0 bytes(15707..15710) },
+	Ident { ident: "fn", span: #0 bytes(15711..15713) },
+	Ident { ident: "test_variadic", span: #0 bytes(15714..15727) },
+	Group {
+		delimiter: Parenthesis,
+		stream: TokenStream [
+			Ident { ident: "_pathname", span: #0 bytes(15728..15737) },
+			Punct { ch: ':', spacing: Alone, span: #0 bytes(15737..15738) },
+			Punct { ch: '*', spacing: Alone, span: #0 bytes(15739..15740) },
+			Ident { ident: "const", span: #0 bytes(15740..15745) },
+			Ident { ident: "c_char", span: #0 bytes(15746..15752) },
+			Punct { ch: ',', spacing: Alone, span: #0 bytes(15752..15753) },
+			Ident { ident: "_flags", span: #0 bytes(15754..15760) },
+			Punct { ch: ':', spacing: Alone, span: #0 bytes(15760..15761) },
+			Ident { ident: "c_int", span: #0 bytes(15762..15767) },
+			Punct { ch: ',', spacing: Alone, span: #0 bytes(15767..15768) },
+			Ident { ident: "mut", span: #0 bytes(15769..15772) },
+			Ident { ident: "_args", span: #0 bytes(15773..15778) },
+			Punct { ch: ':', spacing: Alone, span: #0 bytes(15778..15779) },
+			Punct { ch: '.', spacing: Joint, span: #0 bytes(15780..15783) },
+			Punct { ch: '.', spacing: Joint, span: #0 bytes(15780..15783) },
+			Punct { ch: '.', spacing: Alone, span: #0 bytes(15780..15783) }
+		],
+		span: #0 bytes(15727..15784)
+	},
+	Punct { ch: '-', spacing: Joint, span: #0 bytes(15785..15787) },
+	Punct { ch: '>', spacing: Alone, span: #0 bytes(15785..15787) },
+	Ident { ident: "c_int", span: #0 bytes(15788..15793) },
+	Group {
+		delimiter: Brace,
+		stream: TokenStream [
+			Literal { kind: Integer, symbol: "0", suffix: None, span: #0 bytes(15796..15797) }
+		],
+		span: #0 bytes(15794..15799)
+	}
+]
