@@ -83,8 +83,8 @@ pub fn define_hook(attribute: proc_macro::TokenStream, function: proc_macro::Tok
         type #fnptr_type_alias = #fnptr_type;
 
         #[allow(non_upper_case_globals)]
-        static #real_fnptr: ::once_cell::sync::Lazy<#fnptr_type_alias> =
-            ::once_cell::sync::Lazy::new(|| func!(#target_lib, #fn_item));
+        static #real_fnptr: ::dlhook::Lazy<#fnptr_type_alias> =
+            ::dlhook::Lazy::new(|| ::dlhook::func!(#target_lib, #fn_item));
 
         #[no_mangle]
         #function

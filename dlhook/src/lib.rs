@@ -5,6 +5,8 @@ use procfs::process::{Process, MMapPath};
 
 use goblin::elf::Elf;
 
+pub use once_cell::sync::Lazy;
+
 // #[link(name = "dl")]
 // extern "C" {
 //     fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
@@ -110,8 +112,8 @@ impl<'a> LibHandle<'a> {
 #[macro_export]
 macro_rules! func {
     ($lib_handle:ident, $real_fn:ident) => {{
-        // $crate::hook::named_func($real_fn, concat!(stringify!($real_fn), "\0"))
-        let nf = $crate::hook::named_func($real_fn, stringify!($real_fn));
+        // ::dlhook::named_func($real_fn, concat!(stringify!($real_fn), "\0"))
+        let nf = ::dlhook::named_func($real_fn, stringify!($real_fn));
         let addr = $lib_handle.sym_addr(nf);
         if false {
             // this is a type check which ensures
@@ -127,8 +129,8 @@ macro_rules! func {
 #[macro_export]
 macro_rules! lib_handle {
     ($lib_name:expr) => { || {
-        static LIB: Lazy<Option<Lib>> = Lazy::new(|| {
-            Lib::new($lib_name)
+        static LIB: ::dlhook::Lazy<Option<::dlhook::Lib>> = ::dlhook::Lazy::new(|| {
+            ::dlhook::Lib::new($lib_name)
         });
         LIB.as_ref().map(|lib| lib.handle()).flatten().unwrap()
     }};

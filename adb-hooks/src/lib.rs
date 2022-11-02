@@ -21,23 +21,16 @@ use std::{
 
 use anyhow::Context;
 
+use define_hook::define_hook;
 use libc::{
     DIR, dirent, O_CREAT, mode_t,
     DT_CHR, DT_DIR, openat, AT_FDCWD,
     c_ushort, c_uchar, c_uint
 };
 
-use once_cell::sync::Lazy;
-
 use rand::Rng;
 
-// use redhook::{
-//     hook, real,
-// };
-
-mod hook;
-
-use hook::*;
+use dlhook::*;
 
 use nix::{
     unistd::{lseek, Whence},
