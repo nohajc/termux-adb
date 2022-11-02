@@ -225,10 +225,10 @@ fn libadbhooks_ctor() {
     debug!("libc ELF loaded: {}", LIBC.elf().is_lib);
 
     // resolve the address of libc close to prevent deadlock
-    let _real_close = *REAL_CLOSE;
+    let _real_close = *libc_close;
 
     // debug!("opendir hook address: {:?}", opendir as *const usize);
-    // debug!("opendir calculated address: {:?}", *REAL_OPENDIR as *const usize);
+    // debug!("opendir calculated address: {:?}", *libc_opendir as *const usize);
 
     // let dlsym_opendir: OpenDirFn = unsafe{
     //     mem::transmute(redhook::ld_preload::dlsym_next("opendir\0"))
@@ -328,16 +328,10 @@ impl From<HookedDir> for *mut DIR {
     }
 }
 
-type OpenDirFn = unsafe extern "C" fn(*const u8) -> *mut DIR;
-static REAL_OPENDIR: Lazy<OpenDirFn> = Lazy::new(|| func!(LIBC, opendir));
-// static REAL_OPENDIR: Lazy<OpenDirFn> = Lazy::new(|| unsafe{
-//     mem::transmute(redhook::ld_preload::dlsym_next("opendir\0"))
-// });
-
-#[no_mangle]
+#[define_hook(LIBC)]
 unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
     if name.is_null() {
-        return REAL_OPENDIR(name);
+        return libc_opendir(name);
     }
 
     let name_cstr = CStr::from_ptr(name);
@@ -352,45 +346,39 @@ unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
     }
 
     debug!("called opendir with {}", &name_str);
-    let dir = REAL_OPENDIR(name);
+    let dir = libc_opendir(name);
     if dir.is_null() {
         return null_mut();
     }
     HookedDir::Native(dir).into()
 }
 
-type CloseDirFn = unsafe extern "C" fn(*mut DIR) -> c_int;
-static REAL_CLOSEDIR: Lazy<CloseDirFn> = Lazy::new(|| func!(LIBC, closedir));
-
-#[no_mangle]
+#[define_hook(LIBC)]
 unsafe extern "C" fn closedir(dirp: *mut DIR) -> c_int {
     if dirp.is_null() {
-        return REAL_CLOSEDIR(dirp);
+        return libc_closedir(dirp);
     }
 
     let hooked_dir = Box::from_raw(dirp as *mut HookedDir);
     match hooked_dir.as_ref() {
-        &HookedDir::Native(dirp) => REAL_CLOSEDIR(dirp),
+        &HookedDir::Native(dirp) => libc_closedir(dirp),
         // nothing to do, hooked_dir along with DirStream
         // will be dropped at the end of this function
         &HookedDir::Virtual(_) => 0
     }
 }
 
-type ReadDirFn = unsafe extern "C" fn(*mut DIR) -> *mut dirent;
-static REAL_READDIR: Lazy<ReadDirFn> = Lazy::new(|| func!(LIBC, readdir));
-
-#[no_mangle]
+#[define_hook(LIBC)]
 unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut dirent {
     if dirp.is_null() {
-        return REAL_READDIR(dirp);
+        return libc_readdir(dirp);
     }
 
     let hooked_dir = &mut *(dirp as *mut HookedDir);
     match hooked_dir {
         &mut HookedDir::Native(dirp) => {
             debug!("called readdir with native DIR* {:?}", dirp);
-            let result = REAL_READDIR(dirp);
+            let result = libc_readdir(dirp);
             if let Some(r) = result.as_ref() {
                 debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&r.d_name)));
             }
@@ -410,13 +398,10 @@ unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut dirent {
     }
 }
 
-type CloseFn = unsafe extern "C" fn(c_int) -> c_int;
-static REAL_CLOSE: Lazy<CloseFn> = Lazy::new(|| func!(LIBC, close));
-
 static DELAYED_CLOSE_FDS: Mutex<Vec<c_int>> = Mutex::new(vec![]);
 static DELAYED_FDS_PROCESSED: AtomicBool = AtomicBool::new(false);
 
-#[no_mangle]
+#[define_hook(LIBC)]
 unsafe extern "C" fn close(fd: c_int) -> c_int {
     if !LIBADBHOOKS_INITIALIZED.load(Ordering::SeqCst) {
         let mut delayed_fds = DELAYED_CLOSE_FDS.lock().unwrap();
@@ -427,7 +412,7 @@ unsafe extern "C" fn close(fd: c_int) -> c_int {
     if !DELAYED_FDS_PROCESSED.load(Ordering::SeqCst) {
         let mut delayed_fds = DELAYED_CLOSE_FDS.lock().unwrap();
         for dfd in &*delayed_fds {
-            REAL_CLOSE(*dfd);
+            libc_close(*dfd);
         }
         delayed_fds.clear();
         DELAYED_FDS_PROCESSED.store(true, Ordering::SeqCst);
@@ -439,7 +424,7 @@ unsafe extern "C" fn close(fd: c_int) -> c_int {
             return 0;
         }
     }
-    REAL_CLOSE(fd)
+    libc_close(fd)
 }
 
 // type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
