@@ -86,6 +86,7 @@ pub fn define_hook(attribute: proc_macro::TokenStream, function: proc_macro::Tok
         static #real_fnptr: ::once_cell::sync::Lazy<#fnptr_type_alias> =
             ::once_cell::sync::Lazy::new(|| func!(#target_lib, #fn_item));
 
+        #[no_mangle]
         #function
     };
 
