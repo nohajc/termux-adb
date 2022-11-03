@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 anyhow = "1.0.65"
 ctor = "0.1.23"
 dlhook = { version = "0.1.0", path = "../dlhook" }
-define_hook = { version = "0.1.0", path = "../define-hook"}
+dlhook-macros = { version = "0.1.0", path = "../dlhook-macros"}
 libc = "0.2.134"
 nix = { version = "0.25.0", features = ["fs"] }
 rand = "0.8.5"

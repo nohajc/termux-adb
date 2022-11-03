@@ -21,7 +21,6 @@ use std::{
 
 use anyhow::Context;
 
-use define_hook::define_hook;
 use libc::{
     DIR, dirent, O_CREAT, mode_t,
     DT_CHR, DT_DIR, openat, AT_FDCWD,
@@ -31,6 +30,7 @@ use libc::{
 use rand::Rng;
 
 use dlhook::*;
+use dlhook_macros::define_hook;
 
 use nix::{
     unistd::{lseek, Whence},
