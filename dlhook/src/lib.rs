@@ -38,7 +38,7 @@ fn find_mapped_library(name: &str) -> (usize, usize, PathBuf) {
     for mm in &maps {
         match mm.pathname {
             MMapPath::Path(ref p) => {
-                if p.to_string_lossy().ends_with(name) {
+                if p.to_string_lossy().contains(&format!("/{}", name)) {
                     return (mm.address.0 as usize, (mm.address.1 - mm.address.0) as usize, p.clone())
                 }
             }

@@ -1,7 +1,7 @@
 #!/bin/bash
 
 if [[ -z $1 || -z $2 ]]; then
-   echo "usage: $0 SSH_TARGET armv7l|aarch64"
+   echo "usage: $0 SSH_TARGET armv7|aarch64"
    exit 1
 fi
 
