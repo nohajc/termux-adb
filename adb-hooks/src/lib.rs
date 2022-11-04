@@ -213,16 +213,14 @@ fn get_usb_device_serial() -> Option<UsbSerial> {
 
 static LIBADBHOOKS_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
-static LIBC_FILE: Lazy<Lib> = Lazy::new(|| Lib::new("libc.so").unwrap());
-static LIBC: Lazy<LibHandle> = Lazy::new(|| LIBC_FILE.handle().unwrap());
-// static LIBC: Lazy<LibHandle> = Lazy::new(lib_handle!("libc.so"));
+static LIBC: Lazy<LibHandle> = Lazy::new(|| lib_handle!("libc.so"));
 
 #[ctor]
 fn libadbhooks_ctor() {
     env_logger::init();
 
-    debug!("libc loaded size: {}", LIBC_FILE.size());
-    debug!("libc ELF loaded: {}", LIBC.elf().is_lib);
+    // debug!("libc loaded size: {}", LIBC_FILE.size());
+    // debug!("libc ELF loaded: {}", LIBC.elf().is_lib);
 
     // resolve the address of libc close to prevent deadlock
     let _real_close = *libc_close;

@@ -1,19 +1,14 @@
-use std::{fs, mem, path::PathBuf, marker::PhantomData};
+use std::{fs, mem, path::PathBuf, marker::PhantomData, ffi::CString};
 
-// use libc::{c_char, c_int, c_void};
+use libc::{c_void, dlopen, dlsym, RTLD_LAZY};
 use procfs::process::{Process, MMapPath};
 
 use goblin::elf::Elf;
 
+use atomic::{Atomic, Ordering};
+
 pub use once_cell::sync::Lazy;
 
-// #[link(name = "dl")]
-// extern "C" {
-//     fn dlopen(filename: *const c_char, flags: c_int) -> *mut c_void;
-//     fn dlsym(handle: *mut c_void, symbol: *const c_char) -> *const c_void;
-// }
-
-// const RTLD_LAZY: c_int = 0x1;
 // const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
 
 #[derive(Clone, Copy)]
@@ -48,64 +43,121 @@ fn find_mapped_library(name: &str) -> (usize, usize, PathBuf) {
     (0, 0, PathBuf::default())
 }
 
-pub struct Lib {
+type LazyClosure<'a, T> = Lazy<T, Box<dyn FnOnce() -> T + Send + 'a>>;
+
+struct MemMapLib {
     base: usize,
     raw: Vec<u8>,
 }
 
-impl Lib {
-    pub fn size(&self) -> usize {
-        self.raw.len()
-    }
+struct MemMapLibHandle<'a> {
+    base: usize,
+    elf: Option<Elf<'a>>,
+}
+
+#[derive(Clone, Copy)]
+enum ImplType {
+    Detect,
+    MemMap,
+    DynLink,
+}
+
+pub struct Lib {
+    filename: &'static str,
+    mm_lib: LazyClosure<'static, MemMapLib>,
 }
 
 pub struct LibHandle<'a> {
-    base: usize,
-    elf: Elf<'a>,
+    impl_type: Atomic<ImplType>,
+    mm_hnd: LazyClosure<'a, MemMapLibHandle<'a>>,
+    dl_hnd: *mut c_void,
 }
 
 unsafe impl<'a> Sync for LibHandle<'a> {}
 unsafe impl<'a> Send for LibHandle<'a> {}
 
-impl<'a> LibHandle<'a> {
-    pub fn elf(&self) -> &Elf {
-        &self.elf
-    }
-}
-
 impl Lib {
-    pub fn new(filename: &str) -> Option<Self> {
-        let (base, _size, path) = find_mapped_library(filename);
+    pub fn new(filename: &'static str) -> Option<Self> {
         // println!("DEBUG base: {:#x}", base);
         // let data = unsafe{ slice::from_raw_parts(base as *const u8, size) };
         // let raw = data.to_owned();
         // Some(Lib{base, raw})
-        fs::read(path).ok().map(|raw| {
-            Lib{base, raw}
-        })
+
+        let mm_lib: LazyClosure<MemMapLib> = Lazy::new(Box::new(|| {
+            let (base, _size, path) = find_mapped_library(filename);
+            let raw = match fs::read(path).ok() {
+                Some(data) => data,
+                None => vec![],
+            };
+            MemMapLib{base, raw}
+        }));
+
+        Some(Lib{filename, mm_lib})
+        // fs::read(path).ok().map(|raw| {
+        //     Lib{base, raw}
+        // })
     }
 
     pub fn handle(&self) -> Option<LibHandle> {
-        let base = self.base;
-        Elf::parse(&self.raw).ok().map(|elf| {
-            LibHandle{base, elf}
-        })
+        let mm_hnd: LazyClosure<MemMapLibHandle> = Lazy::new(Box::new(|| {
+            let base = self.mm_lib.base;
+            let elf = Elf::parse(&self.mm_lib.raw).ok();
+            MemMapLibHandle{base, elf}
+        }));
+
+        let fname = CString::new(self.filename).unwrap();
+        let dl_hnd = unsafe{ dlopen(fname.as_ptr(), RTLD_LAZY) };
+
+        Some(LibHandle{impl_type: Atomic::new(ImplType::Detect), mm_hnd, dl_hnd})
+        // Elf::parse(&self.raw).ok().map(|elf| {
+        //     LibHandle{base, elf}
+        // })
     }
 }
 
 impl<'a> LibHandle<'a> {
-    pub fn sym_addr<FnPtr>(&self, nf: NamedFunc<FnPtr>) -> usize {
-        for sym in self.elf.dynsyms.iter() {
-            let sym_name = self.elf.dynstrtab.get_at(sym.st_name).unwrap_or("");
-            if sym_name == nf.name {
-                // println!("DEBUG rel_addr: {:#x}", sym.st_value);
-                let addr = self.base + sym.st_value as usize;
-                // println!("DEBUG abs_addr: {:#x}", addr);
-                return addr;
+    fn mm_sym_addr<FnPtr: Copy>(&self, nf: NamedFunc<FnPtr>) -> usize {
+        self.mm_hnd.elf.as_ref().map_or_else(|| 0, |elf| {
+            for sym in elf.dynsyms.iter() {
+                let sym_name = elf.dynstrtab.get_at(sym.st_name).unwrap_or("");
+                if sym_name == nf.name {
+                    // println!("DEBUG rel_addr: {:#x}", sym.st_value);
+                    let addr = self.mm_hnd.base + sym.st_value as usize;
+                    // println!("DEBUG abs_addr: {:#x}", addr);
+                    return addr;
+                }
+            }
+            0
+        })
+    }
+
+    fn dl_sym_addr<FnPtr: Copy>(&self, nf: NamedFunc<FnPtr>) -> usize {
+        let sym = CString::new(nf.name).unwrap();
+        unsafe{ dlsym(self.dl_hnd, sym.as_ptr()) as usize }
+        // unsafe{ dlsym(RTLD_NEXT, sym.as_ptr()) as usize }
+    }
+
+    pub fn sym_addr<FnPtr: Copy>(&self, nf: NamedFunc<FnPtr>, equals_hook: fn(usize) -> bool) -> usize {
+        match self.impl_type.load(Ordering::SeqCst) {
+            ImplType::Detect => {
+                let sym_addr = self.dl_sym_addr(nf);
+                if !equals_hook(sym_addr) {
+                    println!("DEBUG: dlsym works!");
+                    self.impl_type.store(ImplType::DynLink, Ordering::SeqCst);
+                    sym_addr
+                } else {
+                    println!("DEBUG: dlsym doesn't work, using fallback impl!");
+                    self.impl_type.store(ImplType::MemMap, Ordering::SeqCst);
+                    self.mm_sym_addr(nf)
+                }
+            }
+            ImplType::DynLink => {
+                self.dl_sym_addr(nf)
+            }
+            ImplType::MemMap => {
+                self.mm_sym_addr(nf)
             }
         }
-
-        0
     }
 }
 
@@ -114,7 +166,9 @@ macro_rules! func {
     ($lib_handle:ident, $real_fn:ident) => {{
         // ::dlhook::named_func($real_fn, concat!(stringify!($real_fn), "\0"))
         let nf = ::dlhook::named_func($real_fn, stringify!($real_fn));
-        let addr = $lib_handle.sym_addr(nf);
+        let addr = $lib_handle.sym_addr(nf, |sym| {
+            sym as *const usize == $real_fn as *const usize
+        });
         if false {
             // this is a type check which ensures
             // we're assigning the address of real_fn
@@ -128,7 +182,7 @@ macro_rules! func {
 
 #[macro_export]
 macro_rules! lib_handle {
-    ($lib_name:expr) => { || {
+    ($lib_name:expr) => {{
         static LIB: ::dlhook::Lazy<Option<::dlhook::Lib>> = ::dlhook::Lazy::new(|| {
             ::dlhook::Lib::new($lib_name)
         });
