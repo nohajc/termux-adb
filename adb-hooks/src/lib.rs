@@ -427,9 +427,6 @@ unsafe extern "C" fn close(fd: c_int) -> c_int {
 
 // type OpenFn = unsafe extern "C" fn(*const c_char, c_int, ...) -> c_int;
 // static REAL_OPEN: Lazy<OpenFn> = Lazy::new(|| func!(LIBC, open));
-// static REAL_OPEN: Lazy<OpenFn> = Lazy::new(|| unsafe{
-//     mem::transmute(redhook::ld_preload::dlsym_next("open\0"))
-// });
 
 #[no_mangle]
 pub unsafe extern "C" fn open(pathname: *const c_char, flags: c_int, mut args: ...) -> c_int {

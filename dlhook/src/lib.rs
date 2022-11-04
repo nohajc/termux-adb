@@ -164,7 +164,6 @@ impl<'a> LibHandle<'a> {
 #[macro_export]
 macro_rules! func {
     ($lib_handle:ident, $real_fn:ident) => {{
-        // ::dlhook::named_func($real_fn, concat!(stringify!($real_fn), "\0"))
         let nf = ::dlhook::named_func($real_fn, stringify!($real_fn));
         let addr = $lib_handle.sym_addr(nf, |sym| {
             sym as *const usize == $real_fn as *const usize
