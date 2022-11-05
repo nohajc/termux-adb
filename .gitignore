@@ -8,6 +8,8 @@
 # Executables
 *.exe
 
+dist
+
 # Added by cargo
 
 target
