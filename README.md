@@ -16,6 +16,7 @@ It should work with any USB-C male-to-male cable or the corresponding OTG adapte
 $ pkg install termux-api android-tools
 ```
 
+- download binaries for your target architecture from [Releases](https://github.com/nohajc/termux-adb/releases)
 - copy `termux-adb` and `libadbhooks.so` to some path accessible from Termux session
   (both files must be in the same directory)
 
@@ -30,6 +31,31 @@ Then you can run any adb commands directly, e.g.
 ```
 $ adb devices
 ```
+
+## Build instructions
+
+(You can check the Dockerfile for minimal toolchain setup)
+
+Requirements: linux environment with working gcc and [rustup](https://rustup.rs/) plus all of the following:
+
+1. download [Android NDK r22b](https://github.com/android/ndk/wiki/Unsupported-Downloads#r22b) (I wasn't able to make it work with any newer NDK version)
+2. add linker paths to ~/.cargo/config
+
+```
+[target.armv7-linux-androideabi]
+linker = "/abs/path/to/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
+
+[target.aarch64-linux-android]
+linker = "/abs/path/to/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-linux-android21-clang"
+```
+
+3. install cross-compilation targets (this will also install rust nightly for the `c_variadic` feature)
+`$ ./rustup-install-targets.sh`
+
+4. build individual components (termux-adb, adb-hooks, termux-fastboot) using `./android-build.sh`
+5. alternatively run `./make-release.sh` to build and package all of them at once
+
+There are also scripts for creating a docker toolchain image (`./docker-make-toolchain.sh`) and building the project inside it (`./docker-make-release.sh`)
 
 ## How it actually works
 
