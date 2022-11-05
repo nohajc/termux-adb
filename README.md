@@ -40,7 +40,6 @@ Requirements: linux environment with working gcc and [rustup](https://rustup.rs/
 
 1. download [Android NDK r22b](https://github.com/android/ndk/wiki/Unsupported-Downloads#r22b) (I wasn't able to make it work with any newer NDK version)
 2. add linker paths to ~/.cargo/config
-
 ```
 [target.armv7-linux-androideabi]
 linker = "/abs/path/to/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/armv7a-linux-androideabi21-clang"
@@ -50,12 +49,16 @@ linker = "/abs/path/to/ndk/toolchains/llvm/prebuilt/linux-x86_64/bin/aarch64-lin
 ```
 
 3. install cross-compilation targets (this will also install rust nightly for the `c_variadic` feature)
-`$ ./rustup-install-targets.sh`
+```
+$ ./rustup-install-targets.sh
+```
 
 4. build individual components (termux-adb, adb-hooks, termux-fastboot) using `./android-build.sh`
 5. alternatively run `./make-release.sh` to build and package all of them at once
 
-There are also scripts for creating a docker toolchain image (`./docker-make-toolchain.sh`) and building the project inside it (`./docker-make-release.sh`)
+There are also scripts for
+- creating a docker toolchain image (`./docker-make-toolchain.sh`)
+- and building the project inside it (`./docker-make-release.sh`)
 
 ## How it actually works
 
