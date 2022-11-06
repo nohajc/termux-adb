@@ -353,21 +353,29 @@ unsafe extern "C" fn opendir(name: *const c_char) -> *mut DIR {
 
 #[define_hook(LIBC)]
 unsafe extern "C" fn closedir(dirp: *mut DIR) -> c_int {
+    debug!("called closedir with dirp {:?}", dirp);
     if dirp.is_null() {
         return libc_closedir(dirp);
     }
 
     let hooked_dir = Box::from_raw(dirp as *mut HookedDir);
     match hooked_dir.as_ref() {
-        &HookedDir::Native(dirp) => libc_closedir(dirp),
+        &HookedDir::Native(dirp) => {
+            debug!("closedir: dirp is native DIR* {:?}", dirp);
+            libc_closedir(dirp)
+        }
         // nothing to do, hooked_dir along with DirStream
         // will be dropped at the end of this function
-        &HookedDir::Virtual(_) => 0
+        &HookedDir::Virtual(_) => {
+            debug!("closedir: dirp is virtual DirStream");
+            0
+        }
     }
 }
 
 #[define_hook(LIBC)]
 unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut dirent {
+    debug!("called readdir with dirp {:?}", dirp);
     if dirp.is_null() {
         return libc_readdir(dirp);
     }
@@ -375,20 +383,21 @@ unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut dirent {
     let hooked_dir = &mut *(dirp as *mut HookedDir);
     match hooked_dir {
         &mut HookedDir::Native(dirp) => {
-            debug!("called readdir with native DIR* {:?}", dirp);
+            debug!("readdir: dirp is native DIR* {:?}", dirp);
             let result = libc_readdir(dirp);
             if let Some(r) = result.as_ref() {
-                debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&r.d_name)));
+                debug!("readdir returned dirent {:?} with d_name={}", result, to_string(to_cstr(&r.d_name)));
             }
             result
         }
         &mut HookedDir::Virtual(DirStream{ref mut pos, ref mut entry}) => {
-            debug!("called readdir with virtual DirStream");
+            debug!("readdir: dirp is virtual DirStream");
             match pos {
                 0 => {
                     *pos += 1;
-                    debug!("readdir returned dirent with d_name={}", to_string(to_cstr(&entry.d_name)));
-                    entry as *mut dirent
+                    let result = entry as *mut dirent;
+                    debug!("readdir returned dirent {:?} with d_name={}", result, to_string(to_cstr(&entry.d_name)));
+                    result
                 }
                 _ => null_mut()
             }
