@@ -5,13 +5,16 @@ if [ -z "$1" ]; then
    exit 1
 fi
 
-VERSION=$1
+CARGO_VERSION="$1"
+VERSION="v$1"
 
 set -e
 
 SCRIPT_DIR=$( cd -- "$( dirname -- "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )
 
 cd "$SCRIPT_DIR"
+
+grep -rl --include Cargo.toml '^version =' | xargs -n1 sed -i 's/^version = .*/version = "'$CARGO_VERSION'"/'
 
 # Build
 (cd adb-hooks && ./android-build.sh)
