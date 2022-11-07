@@ -198,7 +198,7 @@ fn print_err_and_convert<T>(r: anyhow::Result<T>) -> Option<T> {
 static TERMUX_USB_SERIAL: Lazy<Mutex<Option<UsbSerial>>> = Lazy::new(|| Mutex::new({
     if let Ok(_) = env::var("TERMUX_ADB_SERVER_RUNNING") {
         debug!("reading TERMUX_USB_FD");
-        print_err_and_convert(get_termux_fd().context("error: missing TERMUX_USB_FD")).and_then(|usb_fd| {
+        get_termux_fd().and_then(|usb_fd| {
             print_err_and_convert(init_libusb_device_serial(usb_fd))
         })
     } else {
