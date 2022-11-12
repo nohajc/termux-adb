@@ -38,7 +38,6 @@ use nix::{
     fcntl::readlink
 };
 
-// TODO: maybe try to link against libusb properly
 use rusb::{constants::LIBUSB_OPTION_NO_DEVICE_DISCOVERY, UsbContext};
 
 use log::{debug, info, error};
