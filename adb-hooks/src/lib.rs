@@ -21,6 +21,8 @@ use std::{
 
 use anyhow::Context;
 
+use arrayvec::ArrayVec;
+
 use libc::{
     DIR, dirent, O_CREAT, mode_t,
     DT_CHR, DT_DIR, openat, AT_FDCWD,
@@ -404,7 +406,7 @@ unsafe extern "C" fn readdir(dirp: *mut DIR) -> *mut dirent {
     }
 }
 
-static DELAYED_CLOSE_FDS: Mutex<Vec<c_int>> = Mutex::new(vec![]);
+static DELAYED_CLOSE_FDS: Mutex<ArrayVec<c_int, 4096>> = Mutex::new(ArrayVec::new_const());
 static DELAYED_FDS_PROCESSED: AtomicBool = AtomicBool::new(false);
 
 #[define_hook(LIBC)]
