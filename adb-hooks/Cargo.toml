@@ -17,7 +17,7 @@ dlhook-macros = { version = "0.1.0", path = "../dlhook-macros"}
 libc = "0.2.134"
 nix = { version = "0.25.0", features = ["fs"] }
 rand = "0.8.5"
-rusb = { version = "0.9.1", git = "https://github.com/nohajc/rusb.git", features = ["nolink"] }
+rusb = { version = "0.9.1", git = "https://github.com/nohajc/rusb.git" }
 log = "0.4.0"
 env_logger = "0.9.0"
 sendfd = "0.4.3"
