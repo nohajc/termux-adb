@@ -1,6 +1,6 @@
 FROM ubuntu:22.04
 
-RUN apt-get update && apt-get -y upgrade && apt-get -y install curl ca-certificates build-essential unzip
+RUN apt-get update && apt-get -y upgrade && apt-get -y install curl ca-certificates build-essential unzip libssl-dev
 
 RUN useradd -s /bin/bash -m rustacean
 USER rustacean
