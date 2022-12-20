@@ -1,0 +1,3 @@
+[submodule "android-tools"]
+	path = android-tools
+	url = https://github.com/nohajc/vendor-adb-patched.git
