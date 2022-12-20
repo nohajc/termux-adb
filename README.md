@@ -33,6 +33,10 @@ For more information, please refer to the Termux documentation:
 https://github.com/termux/termux-packages/wiki/Build-environment
 https://github.com/termux/termux-packages/wiki/Building-packages
 
+## Current limitations
+
+Using `termux-usb` and querying device serial number with `libusb` tends to be slow. That's not a problem for adb which runs as a daemon and scans USB devices periodically. However, it is quite noticable for `termux-fastboot` commands because fastboot doesn't use any background service. This can potentially be improved in a future release.
+
 ## How it actually works
 
 Termux has the `android-tools` package which contains `adb` and `fastboot` but it normally works on rooted devices only.
