@@ -27,11 +27,11 @@ The commands were only renamed to avoid collision with the official `android-too
 
 ## Build instructions
 
-The official termux-packages build environment is used (forked to add the `termux-adb` package: https://github.com/nohajc/termux-packages)
+The official termux-packages build environment is used ([forked](https://github.com/nohajc/termux-packages) to add the `termux-adb` package).
 
 For more information, please refer to the Termux documentation:
-https://github.com/termux/termux-packages/wiki/Build-environment
-https://github.com/termux/termux-packages/wiki/Building-packages
+- https://github.com/termux/termux-packages/wiki/Build-environment
+- https://github.com/termux/termux-packages/wiki/Building-packages
 
 ## Current limitations
 
