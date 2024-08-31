@@ -47,6 +47,6 @@ There is, however, Android API exposed by `termux-usb` utility which gives you a
 Of course, `adb` by itself doesn't know anything about `termux-usb` nor it can take raw file descriptors from command-line or environment.
 If it cannot access `/dev/bus/usb`, it just won't detect any connected devices. This is where `termux-adb` comes in.
 
-Both `adb` and `fastboot` are patched to scan for USB devices using the `termux-usb` command. Furhtermore a Unix Domain Socket is used to transfer the obtained file descriptors from child process to the parent (i.e. `termux-adb` runs `termux-usb` for every detected device which in turn runs `termux-adb` in a special mode that will only send USB file descriptor to the UDS file descriptor provided by environment variable).
+Both `adb` and `fastboot` are patched to scan for USB devices using the `termux-usb` command. Furthermore a Unix Domain Socket is used to transfer the obtained file descriptors from child process to the parent (i.e. `termux-adb` runs `termux-usb` for every detected device which in turn runs `termux-adb` in a special mode that will only send USB file descriptor to the UDS file descriptor provided by environment variable).
 
 This way we don't complicate the user experience and we can work with any number of devices connected at once (e.g. if you have a USB hub connected to the OTG adapter).
