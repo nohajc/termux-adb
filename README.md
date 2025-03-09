@@ -35,7 +35,7 @@ For more information, please refer to the Termux documentation:
 
 ## Current limitations
 
-Using `termux-usb` and querying device serial number with `libusb` tends to be slow. That's not a problem for adb which runs as a daemon and scans USB devices periodically. However, it is quite noticable for `termux-fastboot` commands because fastboot doesn't use any background service. This can potentially be improved in a future release.
+Using `termux-usb` and querying device serial number with `libusb` tends to be slow. That's not a problem for adb which runs as a daemon and scans USB devices periodically. However, it is quite noticeable for `termux-fastboot` commands because fastboot doesn't use any background service. This can potentially be improved in a future release.
 
 ## How it actually works
 
