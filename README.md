@@ -13,7 +13,7 @@ It should work with any USB-C male-to-male cable or the corresponding OTG adapte
 - install Termux:API from F-Droid
 - in Termux:
 ```
-$ curl -s https://raw.githubusercontent.com/nohajc/termux-adb/master/install.sh | bash
+curl -s https://raw.githubusercontent.com/nohajc/termux-adb/master/install.sh | bash
 ```
 
 - this will add `termux-adb` apt repository and install the corresponding public gpg key
